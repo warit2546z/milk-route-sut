@@ -185,4 +185,44 @@ if st.button("🚀 ประมวลผล (Run Optimization)", type="primary",
                 with col_map:
                     st.subheader("🗺️ แผนที่เส้นทาง (TomTom Traffic)")
                     m = folium.Map(location=locations_dict[0]['coords'], zoom_start=13)
-                    folium.TileLayer(tiles=f"
+                    
+                    # บรรทัดที่เคยมีปัญหา ผมจัดรูปแบบ string ใหม่ให้ปลอดภัย 100%
+                    traffic_url = f"https://api.tomtom.com/traffic/map/4/tile/flow/relative0-dark/{{z}}/{{x}}/{{y}}.png?key={API_KEY}"
+                    folium.TileLayer(tiles=traffic_url, attr='TomTom', name='Traffic', overlay=True).add_to(m)
+
+                    all_points = []
+                    for leg in legs:
+                        for p in leg['points']:
+                            all_points.append([p['latitude'], p['longitude']])
+                    folium.PolyLine(all_points, color="#E74C3C", weight=6, opacity=0.8).add_to(m)
+
+                    for i, node_idx in enumerate(route_indices[:-1]):
+                        info = locations_dict[node_idx]
+                        
+                        if node_idx == 0:
+                            folium.Marker(
+                                location=info['coords'],
+                                popup=f"จุดเริ่มต้น: {info['name']}",
+                                icon=folium.Icon(color='green', icon='home')
+                            ).add_to(m)
+                        else:
+                            # โค้ดสร้างไอคอนตัวเลข
+                            icon_html = f"""
+                            <div style="background-color:#2A80B9; border:2px solid white; border-radius:50%; width:30px; height:30px; display:flex; justify-content:center; align-items:center; color:white; font-weight:bold; font-size:14px; box-shadow:0px 2px 5px rgba(0,0,0,0.3);">
+                                {i}
+                            </div>
+                            """
+                            folium.Marker(
+                                location=info['coords'],
+                                popup=f"ลำดับที่ {i}: {info['name']}",
+                                icon=folium.DivIcon(
+                                    icon_size=(30, 30),
+                                    icon_anchor=(15, 15),
+                                    html=icon_html
+                                )
+                            ).add_to(m)
+
+                    st_folium(m, width=700, height=500, returned_objects=[])
+
+        except Exception as e:
+            st.error(f"เกิดข้อผิดพลาดในการดึงข้อมูลแผนที่: {e}")
