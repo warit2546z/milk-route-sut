@@ -13,7 +13,7 @@ import pandas as pd
 # ==========================================
 st.set_page_config(page_title="Milk Run VRPTW Manager", page_icon="🚚", layout="wide")
 st.title("🚚 ระบบจัดเส้นทางนมพร้อมกรอบเวลา (VRPTW Optimization)")
-st.markdown("ระบุเวลาที่ลูกค้าสะดวกรับของ (เว้นว่างได้หากส่งตอนไหนก็ได้) และคีย์ยอดสินค้าแยกตามขนาด")
+st.markdown("อัปเดตฐานข้อมูลล่าสุด (อ้างอิงรอบส่ง 15/12) - สามารถปรับแก้เวลาและยอดได้อิสระ")
 
 # ==========================================
 # 2. แผงควบคุมด้านข้าง (Sidebar)
@@ -23,8 +23,8 @@ with st.sidebar:
     API_KEY = st.text_input("TomTom API Key", value="X8xbhfCgq1Tp192jy5KinmhP8wguznSu", type="password")
     
     st.header("⏱️ การปฏิบัติงาน (Operational)")
-    DEPART_TIME = st.time_input("เวลาเริ่มออกรถจากฟาร์ม", datetime.strptime("10:30", "%H:%M").time())
-    SERVICE_TIME = st.slider("เวลาลงนมเฉลี่ยต่อจุด (นาที)", 1, 15, 3)
+    DEPART_TIME = st.time_input("เวลาเริ่มออกรถจากฟาร์ม", datetime.strptime("11:23", "%H:%M").time())
+    SERVICE_TIME = st.slider("เวลาลงนมเฉลี่ยต่อจุด (นาที)", 1, 15, 2)
     
     st.header("⛽ ต้นทุนและพื้นที่")
     THB_L = st.slider("ราคาน้ำมัน (THB/L)", 20.0, 50.0, 40.0, 0.5)
@@ -40,10 +40,11 @@ COST_PER_KM = THB_L / KM_L
 # 3. ส่วนจัดการข้อมูล (Dynamic Data Editor)
 # ==========================================
 st.subheader("📍 จัดการพิกัด ยอดสินค้า และกรอบเวลา")
-st.info("💡 **ทริค:** หากลูกค้าไม่ได้กำหนดเวลาส่ง ให้เว้นช่อง 'เริ่มรับได้' และ 'ต้องส่งก่อน' ให้ว่างไว้ได้เลยครับ")
+st.info("💡 ข้อมูลพิกัดถูกตั้งค่าตามตารางล่าสุดแล้ว หากต้องการกำหนดเวลาเจาะจงให้กรอกในช่องเวลา หากไม่ฟิกซ์ให้ปล่อยว่างไว้ครับ")
 
+# อัปเดตข้อมูลจากตาราง Excel ล่าสุดของคุณ
 default_data = [
-    {"ชื่อสถานที่": "โรงฟาร์ม มทส.", "Lat": 14.8890708, "Lon": 102.0006967, "200cc (ขวด)": 0, "2L (ถัง)": 0, "5L (แกลลอน)": 0, "เริ่มรับได้": "08:00", "ต้องส่งก่อน": "18:00"}
+    {"ชื่อสถานที่": "สำนักงานฟาร์ม มทส.", "Lat": 14.8890708, "Lon": 102.0006967, "200cc (ขวด)": 0, "2L (ถัง)": 0, "5L (แกลลอน)": 0, "เริ่มรับได้": "", "ต้องส่งก่อน": ""}
 ]
 
 df_init = pd.DataFrame(default_data)
@@ -51,6 +52,7 @@ df_init = pd.DataFrame(default_data)
 edited_df = st.data_editor(
     df_init, 
     num_rows="dynamic", 
+    height=400,
     use_container_width=True,
     column_config={
         "Lat": st.column_config.NumberColumn(format="%.7f"),
@@ -66,7 +68,7 @@ def time_to_min(t_str):
         h, m = map(int, str(t_str).split(':'))
         return h * 60 + m
     except:
-        return None # คืนค่า None ถ้าแปลงไม่ได้หรือเว้นว่าง
+        return None 
 
 def haversine_distance(coord1, coord2):
     lat1, lon1 = coord1; lat2, lon2 = coord2
@@ -92,27 +94,20 @@ def get_demand_list(df):
 st.markdown("---")
 if st.button("🚀 คำนวณเส้นทางและเวลา (Run Optimization)", type="primary", use_container_width=True):
     if edited_df['Lat'].isna().any() or len(edited_df) < 2:
-        st.warning("⚠️ ตรวจพบช่องพิกัดว่างเปล่า หรือมีจุดส่งน้อยเกินไป กรุณาตรวจสอบ")
+        st.warning("⚠️ ตรวจพบช่องพิกัดว่างเปล่า กรุณาตรวจสอบ")
         st.stop()
         
-    with st.spinner('สมองกลกำลังจัดคิวตามกรอบเวลาและความจุรถ...'):
+    with st.spinner('กำลังจัดคิวและคำนวณระยะทางจาก 22 จุด...'):
         coords = edited_df[['Lat', 'Lon']].values.tolist()
         dist_matrix = [[haversine_distance(coords[i], coords[j]) for j in range(len(coords))] for i in range(len(coords))]
-        # ประมาณการเวลาเดินทางเบื้องต้น (ความเร็วเฉลี่ย 30 กม./ชม. = 500 เมตร/นาที)
         time_matrix = [[int((d / 1000) / 30 * 60) + SERVICE_TIME for d in row] for row in dist_matrix]
         
-        # -----------------------------
-        # จัดการกรอบเวลา (เว้นว่าง = 00:00 - 23:59)
-        # -----------------------------
         time_windows = []
         for _, row in edited_df.iterrows():
             start_min = time_to_min(row.get("เริ่มรับได้"))
             end_min = time_to_min(row.get("ต้องส่งก่อน"))
-            
-            # ถ้าเว้นว่าง หรือกรอกผิดรูปแบบ ให้ตีเป็นส่งตอนไหนก็ได้ (0 - 1440 นาที)
             if start_min is None: start_min = 0
             if end_min is None: end_min = 1440
-            
             time_windows.append((start_min, end_min))
 
         demands = get_demand_list(edited_df)
@@ -123,9 +118,9 @@ if st.button("🚀 คำนวณเส้นทางและเวลา (Ru
         def time_callback(from_index, to_index):
             return time_matrix[manager.IndexToNode(from_index)][manager.IndexToNode(to_index)]
         time_callback_index = routing.RegisterTransitCallback(time_callback)
-        routing.SetArcCostEvaluatorOfAllVehicles(time_callback_index) # ให้ความสำคัญกับเวลา
+        routing.SetArcCostEvaluatorOfAllVehicles(time_callback_index) 
         
-        routing.AddDimension(time_callback_index, 1440, 1440, False, "Time") # Wait time allowed, Max time 24h
+        routing.AddDimension(time_callback_index, 1440, 1440, False, "Time")
         time_dimension = routing.GetDimensionOrDie("Time")
 
         for i, window in enumerate(time_windows):
@@ -140,12 +135,12 @@ if st.button("🚀 คำนวณเส้นทางและเวลา (Ru
         search_params = pywrapcp.DefaultRoutingSearchParameters()
         search_params.first_solution_strategy = routing_enums_pb2.FirstSolutionStrategy.PATH_CHEAPEST_ARC
         search_params.local_search_metaheuristic = routing_enums_pb2.LocalSearchMetaheuristic.GUIDED_LOCAL_SEARCH
-        search_params.time_limit.seconds = 5
+        search_params.time_limit.seconds = 8 # เพิ่มเวลาคิดนิดนึงเพราะจุดเริ่มเยอะ
         
         solution = routing.SolveWithParameters(search_params)
 
     if not solution:
-        st.error("❌ หาเส้นทางไม่ได้! สาเหตุอาจเกิดจาก: 1. น้ำหนักเกิน 2. ลูกค้าเวลาชนกันส่งไม่ทัน 3. ตั้งเวลาฟาร์มผิดช่วง")
+        st.error("❌ หาเส้นทางไม่ได้! (อาจเกิดจากน้ำหนักเกินความจุ หรือตั้งเวลาชนกัน)")
     else:
         route_indices = []
         index = routing.Start(0)
@@ -167,11 +162,11 @@ if st.button("🚀 คำนวณเส้นทางและเวลา (Ru
                 total_dist_km = route_summary['lengthInMeters'] / 1000
                 total_cost = (total_dist_km / KM_L) * THB_L
                 
-                st.success(f"✅ จัดคิวสำเร็จ! ระยะทาง: {total_dist_km:.2f} กม. | ต้นทุนประมาณ: ฿{total_cost:.2f}")
+                st.success(f"✅ จัดคิว 22 จุดสำเร็จ! ระยะทาง: {total_dist_km:.2f} กม. | ต้นทุนประมาณ: ฿{total_cost:.2f}")
                 
                 col_map, col_table = st.columns([1.5, 1.2])
                 with col_map:
-                    m = folium.Map(location=coords[0], zoom_start=13)
+                    m = folium.Map(location=coords[0], zoom_start=12)
                     folium.TileLayer(tiles=f"https://api.tomtom.com/traffic/map/4/tile/flow/relative0-dark/{{z}}/{{x}}/{{y}}.png?key={API_KEY}", attr='TomTom', overlay=True).add_to(m)
                     
                     all_points = []
@@ -194,7 +189,7 @@ if st.button("🚀 คำนวณเส้นทางและเวลา (Ru
                     st_folium(m, width="100%", height=500)
 
                 with col_table:
-                    st.subheader("📋 กำหนดการและระยะเวลา (Schedule)")
+                    st.subheader("📋 กำหนดการและเวลา (Schedule)")
                     schedule = []
                     curr_time = datetime.combine(datetime.today(), DEPART_TIME)
                     
@@ -207,12 +202,11 @@ if st.button("🚀 คำนวณเส้นทางและเวลา (Ru
                         schedule.append({
                             "คิว": i,
                             "สถานที่": edited_df.iloc[n]["ชื่อสถานที่"],
-                            "พื้นที่ (L)": demands[n],
                             "ขับรถ (นาที)": travel_min if i > 0 else "-",
                             "ถึงเวลา (ETA)": curr_time.strftime("%H:%M")
                         })
                         
-                        if i > 0: # บวกเวลาบริการ (ยกเว้นตอนออกจากฟาร์มครั้งแรก)
+                        if i > 0: 
                             curr_time += timedelta(minutes=SERVICE_TIME)
                             
                     st.dataframe(pd.DataFrame(schedule), hide_index=True)
