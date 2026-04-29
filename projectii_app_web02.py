@@ -11,9 +11,9 @@ import pandas as pd
 # ==========================================
 # 1. ตั้งค่าหน้าเพจ UI
 # ==========================================
-st.set_page_config(page_title="Milk Run VRPTW Manager", page_icon="🚚", layout="wide")
-st.title("🚚 ระบบจัดเส้นทางนมพร้อมกรอบเวลา (VRPTW Optimization)")
-st.markdown("ระบบแก้ไขบั๊กแผนที่หายเรียบร้อยแล้ว!")
+st.set_page_config(page_title="Milk Run Daily Planner", page_icon="🚚", layout="wide")
+st.title("🚚 ระบบจัดเส้นทางนมประจำวัน (Daily Milk Run Planner)")
+st.markdown("เพิ่มจุดจัดส่งของวันนี้ลงในตารางด้านล่าง ระบบจะคำนวณเส้นทางและเวลาให้โดยอัตโนมัติ")
 
 # ==========================================
 # 2. แผงควบคุมด้านข้าง (Sidebar)
@@ -23,7 +23,7 @@ with st.sidebar:
     API_KEY = st.text_input("TomTom API Key", value="X8xbhfCgq1Tp192jy5KinmhP8wguznSu", type="password")
     
     st.header("⏱️ การปฏิบัติงาน")
-    DEPART_TIME = st.time_input("เวลาเริ่มออกรถจากฟาร์ม", datetime.strptime("11:00", "%H:%M").time())
+    DEPART_TIME = st.time_input("เวลาเริ่มออกรถจากฟาร์ม", datetime.strptime("11:23", "%H:%M").time())
     SERVICE_TIME = st.slider("เวลาลงนมเฉลี่ยต่อจุด (นาที)", 1, 15, 2)
     
     st.header("⛽ ต้นทุนและพื้นที่")
@@ -37,10 +37,12 @@ TOTAL_NET_CAPACITY = (800 - ICE_PER_COOLER) * NUM_COOLERS
 COST_PER_KM = THB_L / KM_L
 
 # ==========================================
-# 3. จัดการข้อมูล
+# 3. จัดการข้อมูลแบบรายวัน
 # ==========================================
-st.subheader("📍 จัดการพิกัด ยอดสินค้า และกรอบเวลา")
+st.subheader("📍 กำหนดจุดจัดส่งประจำวัน (Daily Locations)")
+st.info("💡 **วิธีใช้:** คลิกที่บรรทัดว่างด้านล่างตารางเพื่อเพิ่มจุดส่งของวันนี้ หรือก๊อปปี้จาก Excel มาวางได้เลยครับ (ฟาร์มต้องอยู่ลำดับแรกเสมอ)")
 
+# เหลือแค่ฟาร์ม มทส. เป็นค่าเริ่มต้น
 default_data = [
     {"ชื่อสถานที่": "สำนักงานฟาร์ม มทส.", "Lat": 14.8890708, "Lon": 102.0006967, "200cc": 0, "2L": 0, "5L": 0, "เริ่มรับได้": "", "ต้องส่งก่อน": ""}
 ]
@@ -48,7 +50,7 @@ default_data = [
 edited_df = st.data_editor(
     pd.DataFrame(default_data), 
     num_rows="dynamic", 
-    height=400,
+    height=300,
     use_container_width=True,
     column_config={
         "Lat": st.column_config.NumberColumn(format="%.7f"),
@@ -92,13 +94,16 @@ def get_demand_list(df):
 # 5. ประมวลผลเส้นทาง
 # ==========================================
 st.markdown("---")
-# ใช้ session_state เพื่อจำว่าเคยกดปุ่มแล้ว แผนที่จะได้ไม่หายไปเวลากดส่วนอื่นๆ บนจอ
 if st.button("🚀 คำนวณเส้นทางและเวลา (Run Optimization)", type="primary", use_container_width=True):
     st.session_state['run_opt'] = True
 
 if st.session_state.get('run_opt', False):
-    if edited_df['Lat'].isna().any() or len(edited_df) < 2:
-        st.warning("⚠️ กรุณาตรวจสอบว่ากรอกพิกัดครบถ้วน")
+    if len(edited_df) < 2:
+        st.warning("⚠️ กรุณาเพิ่มจุดจัดส่งลูกค้าอย่างน้อย 1 จุดครับ (ตารางมีแค่ฟาร์ม)")
+        st.stop()
+        
+    if edited_df['Lat'].isna().any() or edited_df['Lon'].isna().any():
+        st.warning("⚠️ กรุณาตรวจสอบว่ากรอกพิกัดครบถ้วน หรือลบแถวที่ว่างเปล่าทิ้งก่อนครับ")
         st.stop()
         
     demands = get_demand_list(edited_df)
@@ -108,7 +113,7 @@ if st.session_state.get('run_opt', False):
         st.error(f"❌ น้ำหนักรวม ({total_demand} L) เกินความจุสุทธิของรถ ({TOTAL_NET_CAPACITY} L) กรุณาเพิ่มจำนวนถัง")
         st.stop()
         
-    with st.spinner('กำลังจัดคิวและคำนวณระยะทางจาก 22 จุด (อาจใช้เวลา 5-10 วินาที)...'):
+    with st.spinner('กำลังใช้สมองกลจัดเส้นทางที่ดีที่สุด...'):
         coords = edited_df[['Lat', 'Lon']].values.tolist()
         dist_matrix = [[haversine_distance(coords[i], coords[j]) for j in range(len(coords))] for i in range(len(coords))]
         time_matrix = [[int((d / 1000) / 30 * 60) + (SERVICE_TIME if i != j else 0) for j, d in enumerate(row)] for i, row in enumerate(dist_matrix)]
@@ -146,12 +151,12 @@ if st.session_state.get('run_opt', False):
         search_params = pywrapcp.DefaultRoutingSearchParameters()
         search_params.first_solution_strategy = routing_enums_pb2.FirstSolutionStrategy.AUTOMATIC
         search_params.local_search_metaheuristic = routing_enums_pb2.LocalSearchMetaheuristic.GUIDED_LOCAL_SEARCH
-        search_params.time_limit.seconds = 10 
+        search_params.time_limit.seconds = 5 
         
         solution = routing.SolveWithParameters(search_params)
 
     if not solution:
-        st.error("❌ หาเส้นทางไม่ได้! กรุณาตรวจสอบว่าไม่ได้ตั้งกรอบเวลาของลูกค้าให้เร็วกว่าเวลาออกรถครับ")
+        st.error("❌ หาเส้นทางไม่ได้! (อาจตั้งกรอบเวลาลูกค้าไว้เร็วกว่าเวลาออกรถ หรือเวลาชนกันจนส่งไม่ทัน)")
     else:
         route_indices = []
         index = routing.Start(0)
@@ -168,12 +173,18 @@ if st.session_state.get('run_opt', False):
             if res.status_code == 200:
                 data = res.json()
                 legs = data['routes'][0]['legs']
-                
                 route_summary = data['routes'][0]['summary']
+                
+                # คำนวณระยะทางและค่าน้ำมัน
                 total_dist_km = route_summary['lengthInMeters'] / 1000
                 total_cost = (total_dist_km / KM_L) * THB_L
                 
-                st.success(f"✅ จัดคิว 22 จุดสำเร็จ! ระยะทาง: {total_dist_km:.2f} กม. | ค่าน้ำมัน: ฿{total_cost:.2f}")
+                # --- ส่วนที่เพิ่มใหม่: คำนวณเวลาเดินทางรวม ---
+                total_time_min = route_summary['travelTimeInSeconds'] // 60
+                hours, mins = divmod(total_time_min, 60)
+                time_display = f"{hours} ชม. {mins} นาที" if hours > 0 else f"{mins} นาที"
+                
+                st.success(f"✅ จัดคิวสำเร็จ! ระยะทาง: {total_dist_km:.2f} กม. | ⏱️ เวลาวิ่งรถรวม: {time_display} | ⛽ ค่าน้ำมัน: ฿{total_cost:.2f} | 📦 โหลด: {total_demand}/{TOTAL_NET_CAPACITY} L")
                 
                 col_map, col_table = st.columns([1.5, 1.2])
                 with col_map:
@@ -194,11 +205,9 @@ if st.session_state.get('run_opt', False):
                         if n == 0:
                             folium.Marker(location=loc_coords, popup=f"เริ่มต้น: {loc_name}", icon=folium.Icon(color='green', icon='home')).add_to(m)
                         else:
-                            icon_html = f'<div style="font-size: 11pt; font-weight: bold; color: white; background-color: #2A80B9; border: 2px solid white; border-radius: 50%; text-align: center; width: 28px; height: 28px; line-height: 24px;">{i}</div>'
-                            # เติม class_name='empty' ป้องกันบั๊กไอคอนเพี้ยน
+                            icon_html = f'''<div style="font-size: 11pt; font-weight: bold; color: white; background-color: #2A80B9; border: 2px solid white; border-radius: 50%; text-align: center; width: 28px; height: 28px; line-height: 24px;">{i}</div>'''
                             folium.Marker(location=loc_coords, popup=f"ลำดับที่ {i}: {loc_name}", icon=folium.DivIcon(html=icon_html, class_name="empty")).add_to(m)
 
-                    # ตัวการสำคัญ! ต้องเติม returned_objects=[] แผนที่ถึงจะไม่รีเฟรชตัวเองหายไป
                     st_folium(m, width="100%", height=500, returned_objects=[])
 
                 with col_table:
