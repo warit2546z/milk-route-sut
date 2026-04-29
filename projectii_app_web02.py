@@ -13,7 +13,7 @@ import pandas as pd
 # ==========================================
 st.set_page_config(page_title="Milk Run Daily Planner", page_icon="🚚", layout="wide")
 st.title("🚚 ระบบจัดเส้นทางนมประจำวัน (Daily Milk Run Planner)")
-st.markdown("ระบบแสดงข้อมูลการใช้น้ำมันแยกตามรายจุดจัดส่ง (Fuel Consumption per Leg)")
+st.markdown("ระบบแสดงข้อมูลระยะทางและการใช้น้ำมันแยกตามรายจุดจัดส่ง")
 
 # ==========================================
 # 2. แผงควบคุมด้านข้าง (Sidebar)
@@ -40,7 +40,6 @@ COST_PER_KM = THB_L / KM_L
 # 3. จัดการข้อมูลแบบรายวัน
 # ==========================================
 st.subheader("📍 กำหนดจุดจัดส่งประจำวัน (Daily Locations)")
-st.info("💡 **วิธีใช้:** นำข้อมูลจาก Excel มาวางที่ตารางด้านล่างได้เลยครับ (แถวแรกต้องเป็นจุดเริ่มต้น/ฟาร์มเสมอ)")
 
 default_data = [
     {"ชื่อสถานที่": "สำนักงานฟาร์ม มทส.", "Lat": 14.8890708, "Lon": 102.0006967, "200cc": 0, "2L": 0, "5L": 0, "เริ่มรับได้": "", "ต้องส่งก่อน": ""}
@@ -181,9 +180,9 @@ if st.session_state.get('run_opt', False):
                 hours, mins = divmod(total_time_min, 60)
                 time_display = f"{hours} ชม. {mins} นาที" if hours > 0 else f"{mins} นาที"
                 
-                st.success(f"✅ จัดคิวสำเร็จ! ระยะทาง: {total_dist_km:.2f} กม. | ⏱️ เวลาวิ่งรถรวม: {time_display} | ⛽ ค่าน้ำมันรวม: ฿{total_cost:.2f}")
+                st.success(f"✅ จัดคิวสำเร็จ! ระยะทางรวม: {total_dist_km:.2f} กม. | ⏱️ เวลาขับรถรวม: {time_display} | ⛽ ค่าน้ำมันรวม: ฿{total_cost:.2f}")
                 
-                col_map, col_table = st.columns([1.5, 1.3]) # ปรับขนาดคอลัมน์ตารางให้กว้างขึ้นนิดนึง
+                col_map, col_table = st.columns([1.5, 1.4]) # ขยายตารางให้กว้างขึ้นอีกนิดเพื่อรองรับคอลัมน์ใหม่
                 with col_map:
                     m = folium.Map(location=coords[0], zoom_start=12)
                     folium.TileLayer(tiles=f"https://api.tomtom.com/traffic/map/4/tile/flow/relative0-dark/{{z}}/{{x}}/{{y}}.png?key={API_KEY}", attr='TomTom', overlay=True).add_to(m)
@@ -208,19 +207,20 @@ if st.session_state.get('run_opt', False):
                     st_folium(m, width="100%", height=500, returned_objects=[])
 
                 with col_table:
-                    st.subheader("📋 กำหนดการและอัตราสิ้นเปลือง")
+                    st.subheader("📋 กำหนดการและการเดินทาง (Trip Details)")
                     schedule = []
                     curr_time = datetime.combine(datetime.today(), DEPART_TIME)
                     
                     for i, n in enumerate(route_indices):
                         travel_min = 0
-                        fuel_used_liters = 0.0 # ตัวแปรเก็บค่าน้ำมันรายจุด
+                        fuel_used_liters = 0.0 
+                        leg_dist_km = 0.0 # ตัวแปรเก็บระยะทางรายจุด
                         
                         if i > 0 and i-1 < len(legs):
                             leg_summary = legs[i-1]['summary']
                             travel_min = math.ceil(leg_summary['travelTimeInSeconds'] / 60)
                             
-                            # คำนวณน้ำมัน: ดึงระยะทางของช่วงนี้ (เมตร) แปลงเป็น กม. แล้วหารด้วยอัตราสิ้นเปลือง (km/L)
+                            # คำนวณระยะทางและน้ำมัน
                             leg_dist_km = leg_summary['lengthInMeters'] / 1000
                             fuel_used_liters = leg_dist_km / KM_L
                             
@@ -229,8 +229,9 @@ if st.session_state.get('run_opt', False):
                         schedule.append({
                             "คิว": i,
                             "สถานที่": edited_df.iloc[n]["ชื่อสถานที่"],
+                            "ระยะทาง (กม.)": f"{leg_dist_km:.2f}" if i > 0 else "-", # เพิ่มคอลัมน์นี้
                             "ขับรถ (นาที)": travel_min if i > 0 else "-",
-                            "ใช้น้ำมัน (L)": f"{fuel_used_liters:.2f}" if i > 0 else "-", # แสดงผลน้ำมัน
+                            "น้ำมัน (L)": f"{fuel_used_liters:.2f}" if i > 0 else "-", 
                             "ถึงเวลา (ETA)": curr_time.strftime("%H:%M")
                         })
                         
