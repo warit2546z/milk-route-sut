@@ -13,7 +13,7 @@ import pandas as pd
 # ==========================================
 st.set_page_config(page_title="Milk Run Daily Planner", page_icon="🚚", layout="wide")
 st.title("🚚 ระบบจัดเส้นทางนมประจำวัน (Daily Milk Run Planner)")
-st.markdown("ระบบแสดงข้อมูลระยะทางและการใช้น้ำมันแยกตามรายจุดจัดส่ง")
+st.markdown("ระบบแสดงข้อมูลระยะทาง น้ำมัน และกราฟวิเคราะห์การปล่อยก๊าซเรือนกระจก (GHG Emissions)")
 
 # ==========================================
 # 2. แผงควบคุมด้านข้าง (Sidebar)
@@ -23,8 +23,8 @@ with st.sidebar:
     API_KEY = st.text_input("TomTom API Key", value="X8xbhfCgq1Tp192jy5KinmhP8wguznSu", type="password")
     
     st.header("⏱️ การปฏิบัติงาน")
-    DEPART_TIME = st.time_input("เวลาเริ่มออกรถจากฟาร์ม", datetime.strptime("11:00", "%H:%M").time())
-    SERVICE_TIME = st.slider("เวลาลงนมเฉลี่ยต่อจุด (นาที)", 1, 15, 1)
+    DEPART_TIME = st.time_input("เวลาเริ่มออกรถจากฟาร์ม", datetime.strptime("11:23", "%H:%M").time())
+    SERVICE_TIME = st.slider("เวลาลงนมเฉลี่ยต่อจุด (นาที)", 1, 15, 2)
     
     st.header("⛽ ต้นทุนและพื้นที่")
     THB_L = st.slider("ราคาน้ำมัน (THB/L)", 20.0, 50.0, 40.0, 0.5)
@@ -35,6 +35,9 @@ with st.sidebar:
 
 TOTAL_NET_CAPACITY = (800 - ICE_PER_COOLER) * NUM_COOLERS
 COST_PER_KM = THB_L / KM_L
+
+# ค่า Emission Factor (kgCO2eq/Liter) ที่คุณระบุ
+EMISSION_FACTOR = 2.70757206 
 
 # ==========================================
 # 3. จัดการข้อมูลแบบรายวัน
@@ -173,16 +176,19 @@ if st.session_state.get('run_opt', False):
                 legs = data['routes'][0]['legs']
                 route_summary = data['routes'][0]['summary']
                 
+                # --- คำนวณสรุปรวมทั้งหมด ---
                 total_dist_km = route_summary['lengthInMeters'] / 1000
                 total_cost = (total_dist_km / KM_L) * THB_L
+                total_fuel_liters = total_dist_km / KM_L
+                total_emissions = total_fuel_liters * EMISSION_FACTOR # คำนวณ CO2 รวม
                 
                 total_time_min = route_summary['travelTimeInSeconds'] // 60
                 hours, mins = divmod(total_time_min, 60)
                 time_display = f"{hours} ชม. {mins} นาที" if hours > 0 else f"{mins} นาที"
                 
-                st.success(f"✅ จัดคิวสำเร็จ! ระยะทางรวม: {total_dist_km:.2f} กม. | ⏱️ เวลาขับรถรวม: {time_display} | ⛽ ค่าน้ำมันรวม: ฿{total_cost:.2f}")
+                st.success(f"✅ จัดคิวสำเร็จ! ระยะทาง: {total_dist_km:.2f} กม. | ⏱️ ขับรถ: {time_display} | ⛽ น้ำมัน: ฿{total_cost:.2f} | 🌍 CO2 ที่ปล่อย: {total_emissions:.2f} kgCO2eq")
                 
-                col_map, col_table = st.columns([1.5, 1.4]) # ขยายตารางให้กว้างขึ้นอีกนิดเพื่อรองรับคอลัมน์ใหม่
+                col_map, col_table = st.columns([1.5, 1.6]) 
                 with col_map:
                     m = folium.Map(location=coords[0], zoom_start=12)
                     folium.TileLayer(tiles=f"https://api.tomtom.com/traffic/map/4/tile/flow/relative0-dark/{{z}}/{{x}}/{{y}}.png?key={API_KEY}", attr='TomTom', overlay=True).add_to(m)
@@ -214,24 +220,26 @@ if st.session_state.get('run_opt', False):
                     for i, n in enumerate(route_indices):
                         travel_min = 0
                         fuel_used_liters = 0.0 
-                        leg_dist_km = 0.0 # ตัวแปรเก็บระยะทางรายจุด
+                        leg_dist_km = 0.0 
+                        emissions_kg = 0.0 # ตัวแปรเก็บ CO2 รายจุด
                         
                         if i > 0 and i-1 < len(legs):
                             leg_summary = legs[i-1]['summary']
                             travel_min = math.ceil(leg_summary['travelTimeInSeconds'] / 60)
                             
-                            # คำนวณระยะทางและน้ำมัน
                             leg_dist_km = leg_summary['lengthInMeters'] / 1000
                             fuel_used_liters = leg_dist_km / KM_L
+                            emissions_kg = fuel_used_liters * EMISSION_FACTOR # คำนวณ CO2
                             
                             curr_time += timedelta(minutes=travel_min)
                         
                         schedule.append({
                             "คิว": i,
                             "สถานที่": edited_df.iloc[n]["ชื่อสถานที่"],
-                            "ระยะทาง (กม.)": f"{leg_dist_km:.2f}" if i > 0 else "-", # เพิ่มคอลัมน์นี้
+                            "ระยะทาง (กม.)": f"{leg_dist_km:.2f}" if i > 0 else "-",
                             "ขับรถ (นาที)": travel_min if i > 0 else "-",
                             "น้ำมัน (L)": f"{fuel_used_liters:.2f}" if i > 0 else "-", 
+                            "CO2 (kg)": f"{emissions_kg:.2f}" if i > 0 else "-", # เพิ่มคอลัมน์ CO2
                             "ถึงเวลา (ETA)": curr_time.strftime("%H:%M")
                         })
                         
@@ -239,6 +247,30 @@ if st.session_state.get('run_opt', False):
                             curr_time += timedelta(minutes=SERVICE_TIME)
                             
                     st.dataframe(pd.DataFrame(schedule), hide_index=True)
+
+                # ==========================================
+                # 6. ส่วนแสดงกราฟเส้น (Line Chart)
+                # ==========================================
+                st.markdown("---")
+                st.subheader("🌍 กราฟวิเคราะห์การปล่อยก๊าซเรือนกระจกรายจุด (GHG Emissions per Leg)")
+                
+                # ดึงข้อมูลจาก schedule มาทำเป็น Dataframe สำหรับกราฟ
+                chart_data = []
+                for item in schedule:
+                    # แปลงค่า CO2 ให้เป็นตัวเลขทศนิยม (ถ้าเป็นจุดเริ่มต้นจะปล่อยค่าเป็น 0)
+                    co2_val = float(item["CO2 (kg)"]) if item["CO2 (kg)"] != "-" else 0.0
+                    
+                    chart_data.append({
+                        "จุดจัดส่ง": f"จุดที่ {item['คิว']}",
+                        "การปล่อยก๊าซเรือนกระจก (kgCO2eq)": co2_val
+                    })
+                
+                # สร้าง Dataframe และตั้งค่าแกน X เป็น 'จุดจัดส่ง'
+                df_chart = pd.DataFrame(chart_data).set_index("จุดจัดส่ง")
+                
+                # วาดกราฟเส้นด้วยฟังก์ชันของ Streamlit
+                st.line_chart(df_chart, color="#2ECC71") # ใส่โค้ดสีเขียวให้เข้ากับธีมรักษ์โลก
+                
             else:
                 st.error("❌ เชื่อมต่อ TomTom API ไม่สำเร็จ กรุณาเช็ก API Key")
         except Exception as e:
