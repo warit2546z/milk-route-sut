@@ -1,7 +1,7 @@
 streamlit
 pandas
 requests
-google-ortools
+ortools
 folium
 streamlit-folium
 xlsxwriter
