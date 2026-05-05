@@ -1,6 +1,8 @@
 streamlit
-ortools
-folium
-streamlit-folium
 pandas
 requests
+google-ortools
+folium
+streamlit-folium
+xlsxwriter
+openpyxl
