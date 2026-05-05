@@ -13,7 +13,7 @@ import pandas as pd
 # ==========================================
 st.set_page_config(page_title="Milk Run Daily Planner", page_icon="🚚", layout="wide")
 st.title("🚚 ระบบจัดเส้นทางนมประจำวัน (As-Is vs To-Be)")
-st.markdown("ระบบวิเคราะห์เส้นทางเปรียบเทียบการจัดคิวแบบมนุษย์ vs สมองกล AI")
+st.markdown("ระบบวิเคราะห์เส้นทางอัจฉริยะ พร้อมกรอบเวลายืดหยุ่น (Soft Time Windows)")
 
 # ==========================================
 # 2. แผงควบคุมด้านข้าง (Sidebar)
@@ -57,7 +57,7 @@ if uploaded_file is not None:
         st.error(f"❌ ไม่สามารถอ่านไฟล์ได้: {e}")
         st.stop()
 else:
-    st.info("💡 กรุณาอัปโหลดไฟล์ Excel (.xlsx) เพื่อเริ่มการทำงาน")
+    st.info("💡 กรุณาอัปโหลดไฟล์ Excel (.xlsx) ที่มีหัวคอลัมน์: ชื่อสถานที่, Lat, Lon, 200cc, 2L, 5L, เริ่มรับได้, ต้องส่งก่อน")
     st.stop()
 
 # ==========================================
@@ -91,10 +91,10 @@ def get_demand_list(df):
     return demands
 
 # ==========================================
-# 5. ประมวลผลเส้นทางและวิเคราะห์
+# 5. ประมวลผลเส้นทาง (AI Core)
 # ==========================================
 st.markdown("---")
-if st.button("🚀 คำนวณเส้นทางเปรียบเทียบ (Analyze As-Is vs To-Be)", type="primary", use_container_width=True):
+if st.button("🚀 คำนวณเส้นทางอัจฉริยะ (Run Optimization)", type="primary", use_container_width=True):
     st.session_state['run_opt'] = True
 
 if st.session_state.get('run_opt', False):
@@ -104,22 +104,18 @@ if st.session_state.get('run_opt', False):
         st.error(f"❌ น้ำหนักรวม ({total_demand} L) เกินความจุของรถ ({TOTAL_NET_CAPACITY} L)")
         st.stop()
         
-    with st.spinner('กำลังใช้ AI คำนวณและเปรียบเทียบเส้นทาง...'):
+    with st.spinner('กำลังประมวลผลเส้นทางด้วยสมองกล...'):
         coords = edited_df[['Lat', 'Lon']].values.tolist()
         dist_matrix = [[haversine_distance(coords[i], coords[j]) for j in range(len(coords))] for i in range(len(coords))]
         
-        # ---------------------------------------------------------
-        # ✨ ส่วนที่เพิ่มใหม่: คำนวณแบบ As-Is (วิ่งตามลำดับใน Excel)
-        # ---------------------------------------------------------
-        baseline_route = list(range(len(coords))) + [0] # เรียงคิว 0 -> 1 -> 2 -> ... -> กลับฟาร์ม
+        # --- Baseline (As-Is) ---
+        baseline_route = list(range(len(coords))) + [0] 
         baseline_dist_m = sum([dist_matrix[baseline_route[i]][baseline_route[i+1]] for i in range(len(baseline_route)-1)])
         baseline_dist_km = baseline_dist_m / 1000
         baseline_cost = (baseline_dist_km / KM_L) * THB_L
         baseline_emissions = (baseline_dist_km / KM_L) * EMISSION_FACTOR
         
-        # ---------------------------------------------------------
-        # To-Be: ให้ OR-Tools คำนวณเส้นทางใหม่
-        # ---------------------------------------------------------
+        # --- OR-Tools Setup (To-Be) ---
         service_time_min_for_matrix = math.ceil(SERVICE_TIME_SEC / 60)
         time_matrix = [[int((d / 1000) / 30 * 60) + (service_time_min_for_matrix if i != j else 0) for j, d in enumerate(row)] for i, row in enumerate(dist_matrix)]
         
@@ -135,15 +131,27 @@ if st.session_state.get('run_opt', False):
         manager = pywrapcp.RoutingIndexManager(len(coords), 1, 0)
         routing = pywrapcp.RoutingModel(manager)
 
-        def time_callback(from_index, to_index): return time_matrix[manager.IndexToNode(from_index)][manager.IndexToNode(to_index)]
+        def time_callback(from_index, to_index): 
+            return time_matrix[manager.IndexToNode(from_index)][manager.IndexToNode(to_index)]
         time_callback_index = routing.RegisterTransitCallback(time_callback)
         routing.SetArcCostEvaluatorOfAllVehicles(time_callback_index) 
         
         routing.AddDimension(time_callback_index, 2880, 2880, False, "Time")
         time_dimension = routing.GetDimensionOrDie("Time")
         time_dimension.CumulVar(routing.Start(0)).SetValue(depart_min) 
+        
+        # ✨ เพิ่มระบบ Soft Time Windows ยืดหยุ่นเวลาการจัดส่ง
+        PENALTY_PER_MINUTE = 100 # ค่าปรับจำลองนาทีละ 100
         for i, window in enumerate(time_windows):
-            time_dimension.CumulVar(manager.NodeToIndex(i)).SetRange(window[0], window[1])
+            index = manager.NodeToIndex(i)
+            start_min, end_min = window[0], window[1]
+            
+            # ถ้ารถไปถึงก่อน start_min ให้รอ (lower bound) / ยอมให้ส่งสายได้ถึง 2 วัน (upper bound)
+            time_dimension.CumulVar(index).SetRange(start_min, 2880) 
+            
+            # ถ้าเป็นจุดของลูกค้า และส่งหลัง end_min ให้คิดค่าปรับ
+            if i != 0 and end_min < 2880:
+                routing.GetDimensionOrDie("Time").SetCumulVarSoftUpperBound(index, end_min, PENALTY_PER_MINUTE)
 
         def demand_callback(from_index): return demands[manager.IndexToNode(from_index)]
         demand_index = routing.RegisterUnaryTransitCallback(demand_callback)
@@ -156,7 +164,7 @@ if st.session_state.get('run_opt', False):
         solution = routing.SolveWithParameters(search_params)
 
     if not solution:
-        st.error("❌ หาเส้นทางไม่ได้! กรุณาเช็กกรอบเวลาหรือน้ำหนัก")
+        st.error("❌ หาเส้นทางไม่ได้! (น้ำหนักของอาจเกินความจุ หรือข้อจำกัดเส้นทางซับซ้อนเกินไป)")
     else:
         route_indices = []
         index = routing.Start(0)
@@ -185,9 +193,8 @@ if st.session_state.get('run_opt', False):
                 hours, mins = divmod(total_time_min, 60)
                 time_display = f"{hours} ชม. {mins} นาที" if hours > 0 else f"{mins} นาที"
                 
-                st.success(f"✅ จัดคิวสำเร็จโดยใช้เวลาเดินทาง: {time_display}")
+                st.success(f"✅ จัดคิวสำเร็จ! (ใช้เวลาเดินทาง: {time_display})")
                 
-                # ✨ ส่วนแสดงผล Dashboard เปรียบเทียบ (As-Is vs To-Be)
                 st.subheader("📊 รายงานสรุปผลความคุ้มค่า (Optimization Savings)")
                 col1, col2, col3 = st.columns(3)
                 
@@ -202,7 +209,6 @@ if st.session_state.get('run_opt', False):
                 with col3:
                     st.metric(label="🌍 คาร์บอนฟุตพริ้นท์ (To-Be)", value=f"{total_emissions:.2f} kgCO2eq", delta=f"{diff_emissions:.2f} kg (รักษ์โลกขึ้น)", delta_color="inverse")
 
-                # แผนที่และตาราง
                 col_map, col_table = st.columns([1.5, 1.6]) 
                 with col_map:
                     m = folium.Map(location=coords[0], zoom_start=12)
