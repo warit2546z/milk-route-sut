@@ -12,11 +12,11 @@ import pandas as pd
 # 1. ตั้งค่าหน้าเพจ UI
 # ==========================================
 st.set_page_config(page_title="Milk Run Daily Planner", page_icon="🚚", layout="wide")
-st.title("🚚 ระบบจัดเส้นทางนมประจำวัน (รองรับการอัปโหลดไฟล์)")
-st.markdown("ระบบคำนวณเส้นทาง น้ำมัน ก๊าซเรือนกระจก และกราฟ CO2")
+st.title("🚚 ระบบจัดเส้นทางนมประจำวัน (ฉบับสมบูรณ์)")
+st.markdown("ระบบคำนวณเส้นทาง น้ำมัน ก๊าซเรือนกระจก และกราฟ CO2 พร้อมระบบอัปโหลดไฟล์")
 
 # ==========================================
-# 2. แผงควบคุมด้านข้าง (Sidebar) - อัปเดตเป็นแบบพิมพ์ตัวเลข
+# 2. แผงควบคุมด้านข้าง (Sidebar)
 # ==========================================
 with st.sidebar:
     st.header("🔑 การเข้าถึงระบบ")
@@ -24,21 +24,19 @@ with st.sidebar:
     
     st.header("⏱️ การปฏิบัติงาน")
     DEPART_TIME = st.time_input("เวลาเริ่มออกรถจากฟาร์ม", datetime.strptime("11:20", "%H:%M").time())
-    # เปลี่ยนเป็น Number Input และใช้หน่วยเป็น "วินาที"
     SERVICE_TIME_SEC = st.number_input("เวลาลงนมเฉลี่ยต่อจุด (วินาที)", min_value=0, value=45, step=5)
     
     st.header("⛽ ต้นทุนและพื้นที่")
-    # เปลี่ยน Slider เป็น Number Input ให้พิมพ์ค่าได้เอง
     THB_L = st.number_input("ราคาน้ำมัน (THB/L)", min_value=1.0, value=40.0, step=0.5, format="%.2f")
     KM_L = st.number_input("อัตราสิ้นเปลือง (km/L)", min_value=1.0, value=12.0, step=0.5, format="%.2f")
     NUM_COOLERS = st.number_input("จำนวนถัง (ใบ)", min_value=1, value=2, step=1)
     ICE_PER_COOLER = st.number_input("น้ำแข็ง/ถัง (L)", min_value=0.0, value=15.0, step=1.0)
     
-    # รับค่าเปอร์เซ็นต์แล้วหาร 100 ในตัวแปร DEAD_SPACE_RATIO
     DEAD_SPACE_RATIO_INPUT = st.number_input("พื้นที่เผื่อช่องว่าง (%)", min_value=0.0, value=15.0, step=1.0)
     DEAD_SPACE_RATIO = DEAD_SPACE_RATIO_INPUT / 100
 
-TOTAL_NET_CAPACITY = (800 - ICE_PER_COOLER) * NUM_COOLERS
+# ✨ แก้ไข Error ตรงนี้: บังคับให้ความจุรถเป็นเลขจำนวนเต็ม (Integer) เสมอ
+TOTAL_NET_CAPACITY = int((800 - ICE_PER_COOLER) * NUM_COOLERS)
 COST_PER_KM = THB_L / KM_L
 EMISSION_FACTOR = 2.70757206 
 
@@ -147,7 +145,6 @@ if st.session_state.get('run_opt', False):
         coords = edited_df[['Lat', 'Lon']].values.tolist()
         dist_matrix = [[haversine_distance(coords[i], coords[j]) for j in range(len(coords))] for i in range(len(coords))]
         
-        # ปัดเศษวินาทีเป็นนาทีเพื่อส่งให้สมองกล OR-Tools คิดแผนหลวมๆ
         service_time_min_for_matrix = math.ceil(SERVICE_TIME_SEC / 60)
         time_matrix = [[int((d / 1000) / 30 * 60) + (service_time_min_for_matrix if i != j else 0) for j, d in enumerate(row)] for i, row in enumerate(dist_matrix)]
         
@@ -179,7 +176,9 @@ if st.session_state.get('run_opt', False):
         def demand_callback(from_index):
             return demands[manager.IndexToNode(from_index)]
         demand_index = routing.RegisterUnaryTransitCallback(demand_callback)
-        routing.AddDimensionWithVehicleCapacity(demand_index, 0, [TOTAL_NET_CAPACITY], True, "Capacity")
+        
+        # ✨ เพิ่มความชัวร์ ให้ครอบด้วย int() อีกชั้น ป้องกัน Error เด็ดขาด
+        routing.AddDimensionWithVehicleCapacity(demand_index, 0, [int(TOTAL_NET_CAPACITY)], True, "Capacity")
 
         search_params = pywrapcp.DefaultRoutingSearchParameters()
         search_params.first_solution_strategy = routing_enums_pb2.FirstSolutionStrategy.AUTOMATIC
@@ -274,7 +273,6 @@ if st.session_state.get('run_opt', False):
                             "ถึงเวลา (ETA)": curr_time.strftime("%H:%M")
                         })
                         
-                        # อัปเดตการบวกเวลาลงนมให้เป็นหน่วย "วินาที" ตามที่รับค่ามาจากหน้าจอ
                         if i > 0: 
                             curr_time += timedelta(seconds=SERVICE_TIME_SEC)
                             
