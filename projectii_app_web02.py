@@ -42,10 +42,8 @@ EMISSION_FACTOR = 2.70757206
 # ==========================================
 st.subheader("📍 กำหนดจุดจัดส่งประจำวัน (Upload Locations)")
 
-# สร้างปุ่มอัปโหลด
 uploaded_file = st.file_uploader("📂 อัปโหลดไฟล์รายการจัดส่ง (Excel หรือ CSV)", type=["csv", "xlsx"])
 
-# ตรวจสอบการอัปโหลด
 if uploaded_file is not None:
     try:
         if uploaded_file.name.endswith('.csv'):
@@ -73,7 +71,7 @@ else:
     st.stop() # ระบบจะหยุดรอตรงนี้จนกว่าจะมีการอัปโหลดไฟล์
 
 # ==========================================
-# 4. ฟังก์ชันเบื้องหลัง
+# 4. ฟังก์ชันเบื้องหลัง (อัปเกรดความถึกทน)
 # ==========================================
 def time_to_min(t_str):
     try:
@@ -89,6 +87,16 @@ def haversine_distance(coord1, coord2):
     a = math.sin(math.radians(lat2 - lat1) / 2.0) ** 2 + math.cos(p1) * math.cos(p2) * math.sin(math.radians(lon2 - lon1) / 2.0) ** 2
     return int(R * (2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))))
 
+# ฟังก์ชันผู้ช่วยสำหรับล้างข้อมูลตัวเลข (ตัดลูกน้ำทิ้ง, ป้องกัน Error ตัวหนังสือ)
+def clean_number(val):
+    if pd.isna(val) or str(val).strip() == "":
+        return 0.0
+    try:
+        clean_str = str(val).replace(',', '').strip()
+        return float(clean_str)
+    except ValueError:
+        return 0.0 
+
 def get_demand_list(df):
     demands = []
     for i, row in df.iterrows():
@@ -96,9 +104,9 @@ def get_demand_list(df):
             demands.append(0)
             continue
             
-        v_200 = float(row["200cc"]) if pd.notna(row["200cc"]) and str(row["200cc"]).strip() != "" else 0
-        v_2L = float(row["2L"]) if pd.notna(row["2L"]) and str(row["2L"]).strip() != "" else 0
-        v_5L = float(row["5L"]) if pd.notna(row["5L"]) and str(row["5L"]).strip() != "" else 0
+        v_200 = clean_number(row.get("200cc"))
+        v_2L = clean_number(row.get("2L"))
+        v_5L = clean_number(row.get("5L"))
         
         vol = (v_200 * 0.2) + (v_2L * 2.0) + (v_5L * 5.0)
         demands.append(math.ceil(vol * (1.0 + DEAD_SPACE_RATIO)))
@@ -114,6 +122,10 @@ if st.button("🚀 คำนวณเส้นทางและเวลา (Ru
 if st.session_state.get('run_opt', False):
     if len(edited_df) < 2:
         st.warning("⚠️ กรุณาเพิ่มจุดจัดส่งลูกค้าอย่างน้อย 1 จุดครับ")
+        st.stop()
+        
+    if edited_df.get('Lat') is None or edited_df.get('Lon') is None:
+        st.error("❌ หาคอลัมน์ 'Lat' หรือ 'Lon' ไม่เจอ! กรุณาตรวจสอบหัวคอลัมน์ในไฟล์ Excel ของคุณว่าสะกดถูกต้องตามคำแนะนำหรือไม่")
         st.stop()
         
     if edited_df['Lat'].isna().any() or edited_df['Lon'].isna().any():
