@@ -1,23 +1,60 @@
+import streamlit as st
+import math
+import requests
+from datetime import datetime, timedelta
+from ortools.constraint_solver import routing_enums_pb2
+from ortools.constraint_solver import pywrapcp
+import folium
+from streamlit_folium import st_folium
+import pandas as pd
+
+# ==========================================
+# 1. ตั้งค่าหน้าเพจ UI
+# ==========================================
+st.set_page_config(page_title="Milk Run Daily Planner", page_icon="🚚", layout="wide")
+st.title("🚚 ระบบจัดเส้นทางนมประจำวัน (รองรับการอัปโหลดไฟล์)")
+st.markdown("ระบบคำนวณเส้นทาง น้ำมัน ก๊าซเรือนกระจก และกราฟ CO2")
+
+# ==========================================
+# 2. แผงควบคุมด้านข้าง (Sidebar)
+# ==========================================
+with st.sidebar:
+    st.header("🔑 การเข้าถึงระบบ")
+    API_KEY = st.text_input("TomTom API Key", value="X8xbhfCgq1Tp192jy5KinmhP8wguznSu", type="password")
+    
+    st.header("⏱️ การปฏิบัติงาน")
+    DEPART_TIME = st.time_input("เวลาเริ่มออกรถจากฟาร์ม", datetime.strptime("11:20", "%H:%M").time())
+    SERVICE_TIME = st.slider("เวลาลงนมเฉลี่ยต่อจุด (นาที)", 1, 15, 1)
+    
+    st.header("⛽ ต้นทุนและพื้นที่")
+    THB_L = st.slider("ราคาน้ำมัน (THB/L)", 20.0, 50.0, 40.0, 0.5)
+    KM_L = st.slider("อัตราสิ้นเปลือง (km/L)", 5.0, 20.0, 12.0, 0.5)
+    NUM_COOLERS = st.slider("จำนวนถัง (ใบ)", 1, 5, 2)
+    ICE_PER_COOLER = st.slider("น้ำแข็ง/ถัง (L)", 0, 100, 15)
+    DEAD_SPACE_RATIO = st.slider("พื้นที่เผื่อช่องว่าง (%)", 0, 30, 15) / 100
+
+TOTAL_NET_CAPACITY = (800 - ICE_PER_COOLER) * NUM_COOLERS
+COST_PER_KM = THB_L / KM_L
+EMISSION_FACTOR = 2.70757206 
+
 # ==========================================
 # 3. จัดการข้อมูลแบบรายวัน (ระบบอัปโหลดไฟล์)
 # ==========================================
 st.subheader("📍 กำหนดจุดจัดส่งประจำวัน (Upload Locations)")
 
-# 1. สร้างปุ่มอัปโหลดไฟล์ รองรับทั้ง CSV และ Excel
-uploaded_file = st.file_uploader("📂 อัปโหลดไฟล์รายการจัดส่ง (CSV หรือ Excel)", type=["csv", "xlsx"])
+# สร้างปุ่มอัปโหลด
+uploaded_file = st.file_uploader("📂 อัปโหลดไฟล์รายการจัดส่ง (Excel หรือ CSV)", type=["csv", "xlsx"])
 
-# 2. ตรวจสอบว่ามีการอัปโหลดไฟล์เข้ามาหรือยัง
+# ตรวจสอบการอัปโหลด
 if uploaded_file is not None:
     try:
-        # อ่านไฟล์ตามนามสกุล
         if uploaded_file.name.endswith('.csv'):
             df = pd.read_csv(uploaded_file)
         else:
             df = pd.read_excel(uploaded_file)
         
-        st.success("✅ อัปโหลดข้อมูลสำเร็จ! คุณสามารถตรวจสอบและแก้ไขข้อมูลด้านล่างได้ก่อนกดคำนวณ")
+        st.success("✅ อัปโหลดข้อมูลสำเร็จ! คุณสามารถตรวจสอบและแก้ไขตัวเลขหน้างานได้ในตารางด้านล่าง")
         
-        # นำข้อมูลที่อัปโหลดมาแสดงใน Data Editor (เพื่อให้ยังสามารถแก้ตัวเลขหน้างานได้นิดหน่อย)
         edited_df = st.data_editor(
             df, 
             num_rows="dynamic", 
@@ -30,10 +67,214 @@ if uploaded_file is not None:
         )
     except Exception as e:
         st.error(f"❌ ไม่สามารถอ่านไฟล์ได้ กรุณาตรวจสอบรูปแบบไฟล์: {e}")
-        st.stop() # หยุดการทำงานถ้ารูปแบบไฟล์ผิด
+        st.stop()
 else:
-    # 3. กรณีที่ยังไม่อัปโหลดไฟล์ ให้แสดงคำแนะนำและตารางตัวอย่าง
-    st.info("💡 **คำแนะนำ:** กรุณาอัปโหลดไฟล์ที่มีหัวคอลัมน์ดังนี้: ชื่อสถานที่, Lat, Lon, 200cc, 2L, 5L, เริ่มรับได้, ต้องส่งก่อน (แถวแรกต้องเป็นฟาร์มเสมอ)")
+    st.info("💡 **คำแนะนำ:** กรุณาเตรียมไฟล์ Excel (.xlsx) ที่มีหัวคอลัมน์ดังนี้ (สะกดให้ตรงเป๊ะนะครับ): \n\n `ชื่อสถานที่`, `Lat`, `Lon`, `200cc`, `2L`, `5L`, `เริ่มรับได้`, `ต้องส่งก่อน` \n\n *(ข้อควรระวัง: แถวแรกสุดของข้อมูล ต้องเป็นที่ตั้งของฟาร์มเสมอ)*")
+    st.stop() # ระบบจะหยุดรอตรงนี้จนกว่าจะมีการอัปโหลดไฟล์
+
+# ==========================================
+# 4. ฟังก์ชันเบื้องหลัง
+# ==========================================
+def time_to_min(t_str):
+    try:
+        h, m = map(int, str(t_str).split(':'))
+        return h * 60 + m
+    except:
+        return None 
+
+def haversine_distance(coord1, coord2):
+    lat1, lon1 = coord1; lat2, lon2 = coord2
+    R = 6371000
+    p1, p2 = math.radians(lat1), math.radians(lat2)
+    a = math.sin(math.radians(lat2 - lat1) / 2.0) ** 2 + math.cos(p1) * math.cos(p2) * math.sin(math.radians(lon2 - lon1) / 2.0) ** 2
+    return int(R * (2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))))
+
+def get_demand_list(df):
+    demands = []
+    for i, row in df.iterrows():
+        if i == 0: 
+            demands.append(0)
+            continue
+            
+        v_200 = float(row["200cc"]) if pd.notna(row["200cc"]) and str(row["200cc"]).strip() != "" else 0
+        v_2L = float(row["2L"]) if pd.notna(row["2L"]) and str(row["2L"]).strip() != "" else 0
+        v_5L = float(row["5L"]) if pd.notna(row["5L"]) and str(row["5L"]).strip() != "" else 0
+        
+        vol = (v_200 * 0.2) + (v_2L * 2.0) + (v_5L * 5.0)
+        demands.append(math.ceil(vol * (1.0 + DEAD_SPACE_RATIO)))
+    return demands
+
+# ==========================================
+# 5. ประมวลผลเส้นทาง
+# ==========================================
+st.markdown("---")
+if st.button("🚀 คำนวณเส้นทางและเวลา (Run Optimization)", type="primary", use_container_width=True):
+    st.session_state['run_opt'] = True
+
+if st.session_state.get('run_opt', False):
+    if len(edited_df) < 2:
+        st.warning("⚠️ กรุณาเพิ่มจุดจัดส่งลูกค้าอย่างน้อย 1 จุดครับ")
+        st.stop()
+        
+    if edited_df['Lat'].isna().any() or edited_df['Lon'].isna().any():
+        st.warning("⚠️ กรุณาตรวจสอบว่ากรอกพิกัดครบถ้วน หรือลบแถวที่ว่างเปล่าทิ้งก่อนครับ")
+        st.stop()
+        
+    demands = get_demand_list(edited_df)
+    total_demand = sum(demands)
     
-    # หยุดการทำงานของโค้ดส่วนที่เหลือจนกว่าจะมีการอัปโหลดไฟล์
-    st.stop()
+    if total_demand > TOTAL_NET_CAPACITY:
+        st.error(f"❌ น้ำหนักรวม ({total_demand} L) เกินความจุสุทธิของรถ ({TOTAL_NET_CAPACITY} L) กรุณาเพิ่มจำนวนถัง")
+        st.stop()
+        
+    with st.spinner('กำลังประมวลผลเส้นทางที่คุ้มค่าที่สุด...'):
+        coords = edited_df[['Lat', 'Lon']].values.tolist()
+        dist_matrix = [[haversine_distance(coords[i], coords[j]) for j in range(len(coords))] for i in range(len(coords))]
+        time_matrix = [[int((d / 1000) / 30 * 60) + (SERVICE_TIME if i != j else 0) for j, d in enumerate(row)] for i, row in enumerate(dist_matrix)]
+        
+        depart_min = DEPART_TIME.hour * 60 + DEPART_TIME.minute
+        time_windows = []
+        for _, row in edited_df.iterrows():
+            start_min = time_to_min(row.get("เริ่มรับได้"))
+            end_min = time_to_min(row.get("ต้องส่งก่อน"))
+            if start_min is None: start_min = 0
+            if end_min is None: end_min = 2880 
+            time_windows.append((start_min, end_min))
+
+        manager = pywrapcp.RoutingIndexManager(len(coords), 1, 0)
+        routing = pywrapcp.RoutingModel(manager)
+
+        def time_callback(from_index, to_index):
+            return time_matrix[manager.IndexToNode(from_index)][manager.IndexToNode(to_index)]
+        time_callback_index = routing.RegisterTransitCallback(time_callback)
+        routing.SetArcCostEvaluatorOfAllVehicles(time_callback_index) 
+        
+        routing.AddDimension(time_callback_index, 2880, 2880, False, "Time")
+        time_dimension = routing.GetDimensionOrDie("Time")
+        time_dimension.CumulVar(routing.Start(0)).SetValue(depart_min) 
+
+        for i, window in enumerate(time_windows):
+            index = manager.NodeToIndex(i)
+            time_dimension.CumulVar(index).SetRange(window[0], window[1])
+
+        def demand_callback(from_index):
+            return demands[manager.IndexToNode(from_index)]
+        demand_index = routing.RegisterUnaryTransitCallback(demand_callback)
+        routing.AddDimensionWithVehicleCapacity(demand_index, 0, [TOTAL_NET_CAPACITY], True, "Capacity")
+
+        search_params = pywrapcp.DefaultRoutingSearchParameters()
+        search_params.first_solution_strategy = routing_enums_pb2.FirstSolutionStrategy.AUTOMATIC
+        search_params.local_search_metaheuristic = routing_enums_pb2.LocalSearchMetaheuristic.GUIDED_LOCAL_SEARCH
+        search_params.time_limit.seconds = 5 
+        
+        solution = routing.SolveWithParameters(search_params)
+
+    if not solution:
+        st.error("❌ หาเส้นทางไม่ได้! (อาจตั้งกรอบเวลาลูกค้าไว้เร็วกว่าเวลาออกรถ หรือเวลาชนกันจนส่งไม่ทัน)")
+    else:
+        route_indices = []
+        index = routing.Start(0)
+        while not routing.IsEnd(index):
+            route_indices.append(manager.IndexToNode(index))
+            index = solution.Value(routing.NextVar(index))
+        route_indices.append(manager.IndexToNode(index))
+
+        route_coords = [f"{coords[n][0]},{coords[n][1]}" for n in route_indices]
+        url = f"https://api.tomtom.com/routing/1/calculateRoute/{':'.join(route_coords)}/json"
+        
+        try:
+            res = requests.get(url, params={"key": API_KEY, "routeType": "fastest", "departAt": "now"})
+            if res.status_code == 200:
+                data = res.json()
+                legs = data['routes'][0]['legs']
+                route_summary = data['routes'][0]['summary']
+                
+                total_dist_km = route_summary['lengthInMeters'] / 1000
+                total_cost = (total_dist_km / KM_L) * THB_L
+                total_fuel_liters = total_dist_km / KM_L
+                total_emissions = total_fuel_liters * EMISSION_FACTOR
+                
+                total_time_min = route_summary['travelTimeInSeconds'] // 60
+                hours, mins = divmod(total_time_min, 60)
+                time_display = f"{hours} ชม. {mins} นาที" if hours > 0 else f"{mins} นาที"
+                
+                st.success(f"✅ จัดคิวสำเร็จ! ระยะทาง: {total_dist_km:.2f} กม. | ⏱️ ขับรถ: {time_display} | ⛽ น้ำมัน: ฿{total_cost:.2f} | 🌍 CO2: {total_emissions:.2f} kgCO2eq")
+                
+                col_map, col_table = st.columns([1.5, 1.6]) 
+                with col_map:
+                    m = folium.Map(location=coords[0], zoom_start=12)
+                    folium.TileLayer(tiles=f"https://api.tomtom.com/traffic/map/4/tile/flow/relative0-dark/{{z}}/{{x}}/{{y}}.png?key={API_KEY}", attr='TomTom', overlay=True).add_to(m)
+                    
+                    all_points = []
+                    for leg in legs:
+                        for p in leg['points']:
+                            all_points.append([p['latitude'], p['longitude']])
+                    folium.PolyLine(all_points, color="#E74C3C", weight=6, opacity=0.8).add_to(m)
+
+                    for i, n in enumerate(route_indices[:-1]):
+                        info = edited_df.iloc[n]
+                        loc_name = info["ชื่อสถานที่"]
+                        loc_coords = [info["Lat"], info["Lon"]]
+                        
+                        if n == 0:
+                            folium.Marker(location=loc_coords, popup=f"เริ่มต้น: {loc_name}", icon=folium.Icon(color='green', icon='home')).add_to(m)
+                        else:
+                            icon_html = f'''<div style="font-size: 11pt; font-weight: bold; color: white; background-color: #2A80B9; border: 2px solid white; border-radius: 50%; text-align: center; width: 28px; height: 28px; line-height: 24px;">{i}</div>'''
+                            folium.Marker(location=loc_coords, popup=f"ลำดับที่ {i}: {loc_name}", icon=folium.DivIcon(html=icon_html, class_name="empty")).add_to(m)
+
+                    st_folium(m, width="100%", height=500, returned_objects=[])
+
+                with col_table:
+                    st.subheader("📋 กำหนดการและการเดินทาง (Trip Details)")
+                    schedule = []
+                    curr_time = datetime.combine(datetime.today(), DEPART_TIME)
+                    
+                    for i, n in enumerate(route_indices):
+                        travel_min = 0
+                        fuel_used_liters = 0.0 
+                        leg_dist_km = 0.0 
+                        emissions_kg = 0.0 
+                        
+                        if i > 0 and i-1 < len(legs):
+                            leg_summary = legs[i-1]['summary']
+                            travel_min = math.ceil(leg_summary['travelTimeInSeconds'] / 60)
+                            
+                            leg_dist_km = leg_summary['lengthInMeters'] / 1000
+                            fuel_used_liters = leg_dist_km / KM_L
+                            emissions_kg = fuel_used_liters * EMISSION_FACTOR 
+                            
+                            curr_time += timedelta(minutes=travel_min)
+                        
+                        schedule.append({
+                            "คิว": i,
+                            "สถานที่": edited_df.iloc[n]["ชื่อสถานที่"],
+                            "ระยะทาง (กม.)": f"{leg_dist_km:.2f}" if i > 0 else "-",
+                            "ขับรถ (นาที)": travel_min if i > 0 else "-",
+                            "น้ำมัน (L)": f"{fuel_used_liters:.2f}" if i > 0 else "-", 
+                            "CO2 (kg)": f"{emissions_kg:.2f}" if i > 0 else "-", 
+                            "ถึงเวลา (ETA)": curr_time.strftime("%H:%M")
+                        })
+                        
+                        if i > 0: 
+                            curr_time += timedelta(minutes=SERVICE_TIME)
+                            
+                    st.dataframe(pd.DataFrame(schedule), hide_index=True)
+
+                st.markdown("---")
+                st.subheader("🌍 กราฟวิเคราะห์การปล่อยก๊าซเรือนกระจกรายจุด (GHG Emissions per Leg)")
+                
+                chart_data = []
+                for item in schedule:
+                    co2_val = float(item["CO2 (kg)"]) if item["CO2 (kg)"] != "-" else 0.0
+                    chart_data.append({
+                        "จุดจัดส่ง": f"จุดที่ {item['คิว']}",
+                        "การปล่อยก๊าซเรือนกระจก (kgCO2eq)": co2_val
+                    })
+                
+                df_chart = pd.DataFrame(chart_data).set_index("จุดจัดส่ง")
+                st.line_chart(df_chart, color="#2ECC71") 
+                
+            else:
+                st.error("❌ เชื่อมต่อ TomTom API ไม่สำเร็จ กรุณาเช็ก API Key")
+        except Exception as e:
+            st.error(f"Error แผนที่: {e}")
