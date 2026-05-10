@@ -37,7 +37,7 @@ with st.sidebar:
     
     st.header("🚧 ข้อจำกัดเส้นทาง (Routing Tweaks)")
     AVOID_AREA = st.text_input("พิกัดพื้นที่ห้ามผ่าน (หลีกเลี่ยงถนน)", value="")
-    st.caption("รูปแบบ: ลัต,ลองมุมที่1:ลัต,ลองมุมที่2")
+    st.caption("รูปแบบ: Lat,Long มุมที่ 1 : Lat,Long มุมที่ 2")
     st.caption("ตัวอย่างเช่น: 14.875,102.015:14.874,102.016")
 
 TOTAL_NET_CAPACITY = int((800 - ICE_PER_COOLER) * NUM_COOLERS)
