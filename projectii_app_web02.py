@@ -46,7 +46,7 @@ def decode_polyline(polyline_str):
 # ==========================================
 st.set_page_config(page_title="Milk Run (Google Engine)", page_icon="🗺️", layout="wide")
 st.title("🗺️ ระบบวางแผนเส้นทางขนส่งนม (Google Maps API)")
-st.markdown("วิเคราะห์เส้นทางด้วยสมองกล OR-Tools พร้อมระบบ **Route Chunking** รองรับคิวงานมากกว่า 25 จุด")
+st.markdown("วิเคราะห์เส้นทางด้วยสมองกล OR-Tools พร้อมระบบ **Route Chunking** และแสดงผลเส้นทางความละเอียดสูง")
 
 # ==========================================
 # 2. แผงควบคุมด้านข้าง (Sidebar)
@@ -179,7 +179,7 @@ if st.button("🚀 ประมวลผลด้วย Google Maps API", type="
         # ----------------------------------------------------
         # การเรียก Directions API (แบบแบ่ง Chunk ทลายข้อจำกัด 25 Waypoints)
         # ----------------------------------------------------
-        with st.spinner('กำลังเชื่อมต่อเซิร์ฟเวอร์ถนนจริง (อาจใช้เวลาสักครู่หากจุดหมายเยอะ)...'):
+        with st.spinner('กำลังเชื่อมต่อเซิร์ฟเวอร์ถนนจริง (ดึงข้อมูลความละเอียดสูง อาจใช้เวลาสักครู่)...'):
             
             all_legs = []
             all_points = []
@@ -224,7 +224,10 @@ if st.button("🚀 ประมวลผลด้วย Google Maps API", type="
                         total_dist_meters += chunk_dist
                         total_time_seconds += chunk_time
                         
-                        all_points.extend(decode_polyline(route_data['overview_polyline']['points']))
+                        # ✨ อัปเดต: ดึงเส้นทางแบบความละเอียดสูง (Step-by-step High Resolution)
+                        for leg in route_data['legs']:
+                            for step in leg['steps']:
+                                all_points.extend(decode_polyline(step['polyline']['points']))
                     else:
                         api_success = False
                         api_error_msg = data.get('error_message', data.get('status', 'Unknown Error'))
@@ -264,9 +267,10 @@ if st.button("🚀 ประมวลผลด้วย Google Maps API", type="
                     attr='Google Maps', name='Google Maps Base', overlay=False, control=True
                 ).add_to(m)
 
+                # ✨ อัปเดต: เปลี่ยนสีเส้นเป็นสีน้ำเงิน (Google Blue #1A73E8) 
                 plugins.AntPath(
                     locations=all_points,
-                    delay=800, dash_array=[15, 30], color="#0F9D58", pulse_color="#FFFFFF", weight=6,
+                    delay=800, dash_array=[15, 30], color="#1A73E8", pulse_color="#FFFFFF", weight=6,
                     name='Google Route (AntPath)'
                 ).add_to(m)
                 
