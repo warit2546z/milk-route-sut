@@ -42,14 +42,13 @@ def decode_polyline(polyline_str):
 # ==========================================
 st.set_page_config(page_title="Milk Run (Google Engine)", page_icon="🗺️", layout="wide")
 st.title("🗺️ ระบบวางแผนเส้นทางขนส่งนม (Google Maps API)")
-st.markdown("วิเคราะห์เส้นทางด้วยสมองกล OR-Tools และดึงเส้นทางถนนจริงจาก Google Cloud")
+st.markdown("วิเคราะห์เส้นทางด้วยสมองกล OR-Tools พร้อมระบบ **Route Chunking** รองรับคิวงานมากกว่า 25 จุด")
 
 # ==========================================
 # 2. แผงควบคุมด้านข้าง (Sidebar)
 # ==========================================
 with st.sidebar:
     st.header("🔑 การเข้าถึงระบบ")
-    # ✨ ใส่คีย์ของคุณวริทธิ์เป็นค่าเริ่มต้นเรียบร้อยแล้ว
     API_KEY = st.text_input("Google Maps API Key", value="", type="password")
     
     st.header("⏱️ การปฏิบัติงาน")
@@ -66,7 +65,6 @@ with st.sidebar:
     st.header("🚧 ข้อจำกัดเส้นทาง")
     TRAVEL_MODE = st.selectbox("ประเภทยานพาหนะ", ["driving"], index=0) 
 
-# คำนวณความจุถัง (450 ลิตร ตามที่อัปเดต)
 TOTAL_NET_CAPACITY = int((450 - ICE_PER_COOLER) * NUM_COOLERS)
 EMISSION_FACTOR = 2.70757206 
 
@@ -174,145 +172,159 @@ if st.button("🚀 ประมวลผลด้วย Google Maps API", type="
         route_indices.append(0)
 
         # ----------------------------------------------------
-        # การเรียก Directions API ของ Google Maps 
+        # การเรียก Directions API (แบบแบ่ง Chunk ทลายข้อจำกัด 25 Waypoints)
         # ----------------------------------------------------
-        with st.spinner('กำลังดึงข้อมูลเส้นทางจริงจาก Google Maps...'):
-            origin = f"{coords[route_indices[0]][0]},{coords[route_indices[0]][1]}"
-            destination = f"{coords[route_indices[-1]][0]},{coords[route_indices[-1]][1]}"
+        with st.spinner('กำลังเชื่อมต่อเซิร์ฟเวอร์ถนนจริง (อาจใช้เวลาสักครู่หากจุดหมายเยอะ)...'):
             
-            # จุดแวะพัก (Waypoints)
-            waypoints_list = [f"{coords[n][0]},{coords[n][1]}" for n in route_indices[1:-1]]
-            waypoints_str = "optimize:false|" + "|".join(waypoints_list) if waypoints_list else ""
+            all_legs = []
+            all_points = []
+            total_dist_meters = 0
+            total_time_seconds = 0
             
-            url = "https://maps.googleapis.com/maps/api/directions/json"
-            params = {
-                "origin": origin,
-                "destination": destination,
-                "waypoints": waypoints_str,
-                "mode": TRAVEL_MODE,
-                "key": API_KEY,
-                "language": "th"
-            }
-            res = requests.get(url, params=params)
-        
-        if res.status_code == 200:
-            data = res.json()
-            if data.get('status') == 'OK':
-                route_data = data['routes'][0]
+            start_idx = 0
+            api_success = True
+            api_error_msg = ""
+            
+            # วนลูปหั่นการทำงานทีละ 25 จุดแวะพัก (รวมปลายทางเป็นชุดละ 27 พิกัด)
+            while start_idx < len(route_indices) - 1:
+                end_idx = min(start_idx + 26, len(route_indices) - 1)
+                chunk_indices = route_indices[start_idx : end_idx + 1]
                 
-                # คำนวณผลรวมจากทุกช่วงการเดินทาง (Legs)
-                total_dist_meters = sum([leg['distance']['value'] for leg in route_data['legs']])
-                total_time_seconds = sum([leg['duration']['value'] for leg in route_data['legs']])
+                origin = f"{coords[chunk_indices[0]][0]},{coords[chunk_indices[0]][1]}"
+                destination = f"{coords[chunk_indices[-1]][0]},{coords[chunk_indices[-1]][1]}"
                 
-                dist_km = total_dist_meters / 1000
-                cost = (dist_km / KM_L) * THB_L
-                dist_delta = dist_km - baseline_km
+                waypoints_list = [f"{coords[n][0]},{coords[n][1]}" for n in chunk_indices[1:-1]]
+                waypoints_str = "optimize:false|" + "|".join(waypoints_list) if waypoints_list else ""
                 
-                # ถอดรหัสเส้นทางสำหรับวาดลงแผนที่
-                all_points = decode_polyline(route_data['overview_polyline']['points'])
+                url = "https://maps.googleapis.com/maps/api/directions/json"
+                params = {
+                    "origin": origin,
+                    "destination": destination,
+                    "waypoints": waypoints_str,
+                    "mode": TRAVEL_MODE,
+                    "key": API_KEY,
+                    "language": "th"
+                }
                 
-                # --- Dashboard ---
-                st.subheader("📊 การวิเคราะห์ผลลัพธ์รวม (Google Maps)")
-                c1, c2, c3, c4 = st.columns(4)
-                c1.metric("ระยะทางรวม", f"{dist_km:.2f} กม.", f"{dist_delta:.2f} กม.", delta_color="inverse")
-                c2.metric("ต้นทุนน้ำมัน", f"฿{cost:.2f}", f"฿{(dist_delta/KM_L)*THB_L:.2f}", delta_color="inverse")
-                c3.metric("CO2 ทั้งเที่ยว", f"{(dist_km/KM_L)*EMISSION_FACTOR:.2f} kg", f"{(dist_delta/KM_L)*EMISSION_FACTOR:.2f} kg", delta_color="inverse")
-                hh, mm = divmod(total_time_seconds // 60, 60)
-                c4.metric("เวลาเดินทางรวม", f"{int(hh)} ชม. {int(mm)} นาที" if hh > 0 else f"{int(mm)} นาที")
-
-                # --- แผนที่และตาราง ---
-                col_map, col_table = st.columns([1.3, 1.7])
-                with col_map:
-                    st.subheader("🗺️ แผนที่เส้นทาง (Google Maps Layer)")
-                    
-                    m = folium.Map(location=coords[0], zoom_start=14, control_scale=True)
-                    
-                    # เข็มทิศ
-                    north_arrow_url = "https://upload.wikimedia.org/wikipedia/commons/e/ec/Compass_rose_n_blank.svg"
-                    FloatImage(north_arrow_url, bottom=5, left=90, width="6%").add_to(m)
-                    
-                    # ชั้นแผนที่เป็นของ Google Maps
-                    folium.TileLayer(
-                        tiles='http://mt0.google.com/vt/lyrs=m&hl=th&x={x}&y={y}&z={z}',
-                        attr='Google Maps',
-                        name='Google Maps Base',
-                        overlay=False, control=True
-                    ).add_to(m)
-
-                    # วาดเส้นทาง (สีเขียวเข้มแบบ Google)
-                    plugins.AntPath(
-                        locations=all_points,
-                        delay=800, dash_array=[15, 30], color="#0F9D58", pulse_color="#FFFFFF", weight=6,
-                        name='Google Route (AntPath)'
-                    ).add_to(m)
-                    
-                    # ปักหมุด
-                    for i, n in enumerate(route_indices[:-1]):
-                        loc = edited_df.iloc[n]
-                        if n == 0:
-                            folium.Marker([loc['Lat'], loc['Lon']], popup="ฟาร์ม", icon=folium.Icon(color='green', icon='home')).add_to(m)
-                        else:
-                            icon_html = f'''<div style="font-size: 11pt; font-weight: bold; color: white; background-color: #E74C3C; border: 2px solid white; border-radius: 50%; text-align: center; width: 28px; height: 28px; line-height: 24px;">{i}</div>'''
-                            folium.Marker([loc['Lat'], loc['Lon']], popup=f"คิว {i}: {loc['ชื่อสถานที่']}", icon=folium.DivIcon(html=icon_html)).add_to(m)
-                    
-                    folium.LayerControl().add_to(m)
-                    st_folium(m, width="100%", height=500, returned_objects=[])
-                    
-                    map_html = io.BytesIO()
-                    m.save(map_html, close_file=False)
-                    st.download_button(
-                        label="💾 ดาวน์โหลดแผนที่ (HTML)",
-                        data=map_html.getvalue(),
-                        file_name="Google_Optimized_Route.html",
-                        mime="text/html",
-                        use_container_width=True
-                    )
-
-                with col_table:
-                    st.subheader("📋 ตารางวิเคราะห์คิวงาน (แตะลิงก์เพื่อนำทาง)")
-                    schedule = []
-                    curr_time = datetime.combine(datetime.today(), DEPART_TIME)
-                    for i, n in enumerate(route_indices[:-1]):
-                        t_min, l_dist, f_used, c_leg = 0, 0.0, 0.0, 0.0
-                        loc_data = edited_df.iloc[n]
+                res = requests.get(url, params=params)
+                
+                if res.status_code == 200:
+                    data = res.json()
+                    if data.get('status') == 'OK':
+                        route_data = data['routes'][0]
+                        all_legs.extend(route_data['legs']) # นำระยะทางย่อยมาต่อกัน
                         
-                        if i > 0:
-                            leg = route_data['legs'][i-1]
-                            t_min = math.ceil(leg['duration']['value'] / 60)
-                            l_dist = leg['distance']['value'] / 1000
-                            f_used = l_dist / KM_L
-                            c_leg = f_used * EMISSION_FACTOR
-                            curr_time += timedelta(minutes=t_min)
+                        chunk_dist = sum([leg['distance']['value'] for leg in route_data['legs']])
+                        chunk_time = sum([leg['duration']['value'] for leg in route_data['legs']])
                         
-                        maps_url = f"https://www.google.com/maps/dir/?api=1&destination={loc_data['Lat']},{loc_data['Lon']}"
+                        total_dist_meters += chunk_dist
+                        total_time_seconds += chunk_time
                         
-                        schedule.append({
-                            "คิว": i, 
-                            "สถานที่": loc_data["ชื่อสถานที่"], 
-                            "เวลาที่ถึง": curr_time.strftime("%H:%M"),
-                            "นำทาง": maps_url if i > 0 else None,
-                            "เดินทาง (นาที)": t_min if i > 0 else "-", 
-                            "ระยะทาง (กม.)": f"{l_dist:.2f}" if i > 0 else "-",
-                            "น้ำมัน (ลิตร)": f"{f_used:.2f}" if i > 0 else "-", 
-                            "CO2 (kg)": f"{c_leg:.2f}" if i > 0 else "-"
-                        })
-                        curr_time += timedelta(seconds=SERVICE_TIME_SEC)
+                        # ถอดรหัสเส้นทางแล้วเย็บต่อกันให้เป็นเส้นยาวเส้นเดียว
+                        all_points.extend(decode_polyline(route_data['overview_polyline']['points']))
+                    else:
+                        api_success = False
+                        api_error_msg = data.get('error_message', data.get('status', 'Unknown Error'))
+                        break
+                else:
+                    api_success = False
+                    api_error_msg = f"HTTP Error: ไม่สามารถเชื่อมต่อ Google API ได้ (Status Code: {res.status_code})"
+                    break
                     
-                    df_schedule = pd.DataFrame(schedule)
-                    st.dataframe(
-                        df_schedule, use_container_width=True, hide_index=True,
-                        column_config={"นำทาง": st.column_config.LinkColumn("📍 นำทาง", display_text="เปิดแผนที่")}
-                    )
+                # ขยับจุดเริ่มต้นของ Chunk ถัดไป ให้เป็นปลายทางของ Chunk ปัจจุบัน
+                start_idx = end_idx 
+
+        if api_success:
+            dist_km = total_dist_meters / 1000
+            cost = (dist_km / KM_L) * THB_L
+            dist_delta = dist_km - baseline_km
+            
+            # --- Dashboard ---
+            st.subheader("📊 การวิเคราะห์ผลลัพธ์รวม (Google Maps)")
+            c1, c2, c3, c4 = st.columns(4)
+            c1.metric("ระยะทางรวม", f"{dist_km:.2f} กม.", f"{dist_delta:.2f} กม.", delta_color="inverse")
+            c2.metric("ต้นทุนน้ำมัน", f"฿{cost:.2f}", f"฿{(dist_delta/KM_L)*THB_L:.2f}", delta_color="inverse")
+            c3.metric("CO2 ทั้งเที่ยว", f"{(dist_km/KM_L)*EMISSION_FACTOR:.2f} kg", f"{(dist_delta/KM_L)*EMISSION_FACTOR:.2f} kg", delta_color="inverse")
+            hh, mm = divmod(total_time_seconds // 60, 60)
+            c4.metric("เวลาเดินทางรวม", f"{int(hh)} ชม. {int(mm)} นาที" if hh > 0 else f"{int(mm)} นาที")
+
+            # --- แผนที่และตาราง ---
+            col_map, col_table = st.columns([1.3, 1.7])
+            with col_map:
+                st.subheader("🗺️ แผนที่เส้นทาง (Google Maps Layer)")
+                
+                m = folium.Map(location=coords[0], zoom_start=14, control_scale=True)
+                north_arrow_url = "https://upload.wikimedia.org/wikipedia/commons/e/ec/Compass_rose_n_blank.svg"
+                FloatImage(north_arrow_url, bottom=5, left=90, width="6%").add_to(m)
+                
+                folium.TileLayer(
+                    tiles='http://mt0.google.com/vt/lyrs=m&hl=th&x={x}&y={y}&z={z}',
+                    attr='Google Maps', name='Google Maps Base', overlay=False, control=True
+                ).add_to(m)
+
+                # วาดเส้นทางที่ต่อกันเสร็จแล้ว
+                plugins.AntPath(
+                    locations=all_points,
+                    delay=800, dash_array=[15, 30], color="#0F9D58", pulse_color="#FFFFFF", weight=6,
+                    name='Google Route (AntPath)'
+                ).add_to(m)
+                
+                for i, n in enumerate(route_indices[:-1]):
+                    loc = edited_df.iloc[n]
+                    if n == 0:
+                        folium.Marker([loc['Lat'], loc['Lon']], popup="ฟาร์ม", icon=folium.Icon(color='green', icon='home')).add_to(m)
+                    else:
+                        icon_html = f'''<div style="font-size: 11pt; font-weight: bold; color: white; background-color: #E74C3C; border: 2px solid white; border-radius: 50%; text-align: center; width: 28px; height: 28px; line-height: 24px;">{i}</div>'''
+                        folium.Marker([loc['Lat'], loc['Lon']], popup=f"คิว {i}: {loc['ชื่อสถานที่']}", icon=folium.DivIcon(html=icon_html)).add_to(m)
+                
+                folium.LayerControl().add_to(m)
+                st_folium(m, width="100%", height=500, returned_objects=[])
+                
+                map_html = io.BytesIO()
+                m.save(map_html, close_file=False)
+                st.download_button(
+                    label="💾 ดาวน์โหลดแผนที่ (HTML)", data=map_html.getvalue(),
+                    file_name="Google_Optimized_Route.html", mime="text/html", use_container_width=True
+                )
+
+            with col_table:
+                st.subheader("📋 ตารางวิเคราะห์คิวงาน (แตะลิงก์เพื่อนำทาง)")
+                schedule = []
+                curr_time = datetime.combine(datetime.today(), DEPART_TIME)
+                for i, n in enumerate(route_indices[:-1]):
+                    t_min, l_dist, f_used, c_leg = 0, 0.0, 0.0, 0.0
+                    loc_data = edited_df.iloc[n]
                     
-                    # ปุ่มดาวน์โหลด Excel
-                    st.markdown("---")
-                    buf = io.BytesIO()
-                    with pd.ExcelWriter(buf, engine='xlsxwriter') as writer:
-                        df_schedule.to_excel(writer, index=False, sheet_name='MilkRun_Plan')
-                    st.download_button("📥 ดาวน์โหลดใบงาน Excel", buf.getvalue(), "Google_MilkRun_Plan.xlsx", use_container_width=True)
-            else:
-                st.error(f"❌ Google API Error: {data.get('error_message', data.get('status', 'Unknown Error'))}")
+                    if i > 0:
+                        leg = all_legs[i-1] # ดึงข้อมูลระยะทางย่อยจากก้อนที่รวมไว้
+                        t_min = math.ceil(leg['duration']['value'] / 60)
+                        l_dist = leg['distance']['value'] / 1000
+                        f_used = l_dist / KM_L
+                        c_leg = f_used * EMISSION_FACTOR
+                        curr_time += timedelta(minutes=t_min)
+                    
+                    maps_url = f"https://www.google.com/maps/dir/?api=1&destination={loc_data['Lat']},{loc_data['Lon']}"
+                    
+                    schedule.append({
+                        "คิว": i, "สถานที่": loc_data["ชื่อสถานที่"], "เวลาที่ถึง": curr_time.strftime("%H:%M"),
+                        "นำทาง": maps_url if i > 0 else None, "เดินทาง (นาที)": t_min if i > 0 else "-", 
+                        "ระยะทาง (กม.)": f"{l_dist:.2f}" if i > 0 else "-", "น้ำมัน (ลิตร)": f"{f_used:.2f}" if i > 0 else "-", 
+                        "CO2 (kg)": f"{c_leg:.2f}" if i > 0 else "-"
+                    })
+                    curr_time += timedelta(seconds=SERVICE_TIME_SEC)
+                
+                df_schedule = pd.DataFrame(schedule)
+                st.dataframe(
+                    df_schedule, use_container_width=True, hide_index=True,
+                    column_config={"นำทาง": st.column_config.LinkColumn("📍 นำทาง", display_text="เปิดแผนที่")}
+                )
+                
+                st.markdown("---")
+                buf = io.BytesIO()
+                with pd.ExcelWriter(buf, engine='xlsxwriter') as writer:
+                    df_schedule.to_excel(writer, index=False, sheet_name='MilkRun_Plan')
+                st.download_button("📥 ดาวน์โหลดใบงาน Excel", buf.getvalue(), "Google_MilkRun_Plan.xlsx", use_container_width=True)
         else:
-            st.error(f"❌ HTTP Error: ไม่สามารถเชื่อมต่อ Google API ได้ (Status Code: {res.status_code})")
+            st.error(f"❌ Google API Error: {api_error_msg}")
     else:
         st.error("❌ หาเส้นทางไม่ได้ (น้ำหนักเกินหรือเงื่อนไขเวลาขัดแย้งกัน)")
