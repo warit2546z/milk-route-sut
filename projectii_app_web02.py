@@ -12,7 +12,7 @@ import pandas as pd
 import io
 
 # ==========================================
-# ฟังก์ชันถอดรหัสเส้นทางของ Google Maps (อัปเดตแก้บั๊กพิกัดเพี้ยน)
+# ฟังก์ชันถอดรหัสเส้นทางของ Google Maps (แก้บั๊กพิกัดเพี้ยน)
 # ==========================================
 def decode_polyline(polyline_str):
     index, lat, lng = 0, 0, 0
@@ -46,7 +46,7 @@ def decode_polyline(polyline_str):
 # ==========================================
 st.set_page_config(page_title="Milk Run (Google Engine)", page_icon="🗺️", layout="wide")
 st.title("🗺️ ระบบวางแผนเส้นทางขนส่งนม (Google Maps API)")
-st.markdown("วิเคราะห์เส้นทางด้วยสมองกล OR-Tools พร้อมระบบ **Route Chunking** และแสดงผลเส้นทางความละเอียดสูง")
+st.markdown("วิเคราะห์เส้นทางด้วยสมองกล OR-Tools พร้อมระบบ **Route Chunking** และวิเคราะห์ประเภทถนนอัตโนมัติ")
 
 # ==========================================
 # 2. แผงควบคุมด้านข้าง (Sidebar)
@@ -139,6 +139,7 @@ if st.button("🚀 ประมวลผลด้วย Google Maps API", type="
         manager = pywrapcp.RoutingIndexManager(len(coords), 1, 0)
         routing = pywrapcp.RoutingModel(manager)
         
+        # สมมติฐานความเร็วช่วงจัดคิวที่ 30 km/h
         def time_callback(from_index, to_index):
             d = dist_matrix[manager.IndexToNode(from_index)][manager.IndexToNode(to_index)]
             return int((d / 1000) / 30 * 60) + (math.ceil(SERVICE_TIME_SEC / 60) if from_index != 0 else 0)
@@ -267,7 +268,7 @@ if st.button("🚀 ประมวลผลด้วย Google Maps API", type="
                     attr='Google Maps', name='Google Maps Base', overlay=False, control=True
                 ).add_to(m)
 
-                # เปลี่ยนสีเส้นเป็นสีน้ำเงิน (Google Blue #1A73E8) 
+                # สีเส้น AntPath น้ำเงิน Google Blue
                 plugins.AntPath(
                     locations=all_points,
                     delay=800, dash_array=[15, 30], color="#1A73E8", pulse_color="#FFFFFF", weight=6,
@@ -293,11 +294,13 @@ if st.button("🚀 ประมวลผลด้วย Google Maps API", type="
                 )
 
             with col_table:
-                st.subheader("📋 ตารางวิเคราะห์คิวงาน (แตะลิงก์เพื่อนำทาง)")
+                st.subheader("📋 ตารางวิเคราะห์เส้นทางเชิงลึก (แยกประเภทถนน)")
                 schedule = []
                 curr_time = datetime.combine(datetime.today(), DEPART_TIME)
+                
                 for i, n in enumerate(route_indices[:-1]):
-                    t_min, l_dist, f_used, c_leg, speed_kmh = 0, 0.0, 0.0, 0.0, 0.0
+                    t_min, l_dist, f_used, c_leg, avg_speed, max_speed = 0, 0.0, 0.0, 0.0, 0.0, 0.0
+                    dominant_road = "-"
                     loc_data = edited_df.iloc[n]
                     
                     if i > 0:
@@ -309,9 +312,27 @@ if st.button("🚀 ประมวลผลด้วย Google Maps API", type="
                         f_used = l_dist / KM_L
                         c_leg = f_used * EMISSION_FACTOR
                         
-                        # สมการคำนวณความเร็ว (km/h) = ระยะทาง (กม.) / เวลา (ชั่วโมง)
-                        if duration_sec > 0:
-                            speed_kmh = l_dist / (duration_sec / 3600)
+                        # อัลกอริทึมวิเคราะห์พฤติกรรมความเร็วราย Step (Speed Heuristics)
+                        road_types = {"ถนนหลัก": 0, "ถนนรอง": 0, "ซอย/รถติด": 0}
+                        
+                        for step in leg['steps']:
+                            s_dist = step['distance']['value']
+                            s_dur = step['duration']['value']
+                            
+                            if s_dur > 0:
+                                s_speed = (s_dist / 1000) / (s_dur / 3600)
+                                if s_speed > max_speed: 
+                                    max_speed = s_speed
+                                
+                                if s_speed >= 50:
+                                    road_types["ถนนหลัก"] += s_dist
+                                elif s_speed >= 25:
+                                    road_types["ถนนรอง"] += s_dist
+                                else:
+                                    road_types["ซอย/รถติด"] += s_dist
+                        
+                        if sum(road_types.values()) > 0:
+                            dominant_road = max(road_types, key=road_types.get)
                             
                         curr_time += timedelta(minutes=t_min)
                     
@@ -322,11 +343,11 @@ if st.button("🚀 ประมวลผลด้วย Google Maps API", type="
                         "สถานที่": loc_data["ชื่อสถานที่"], 
                         "เวลาที่ถึง": curr_time.strftime("%H:%M"),
                         "นำทาง": maps_url if i > 0 else None, 
-                        "เดินทาง (นาที)": t_min if i > 0 else "-", 
                         "ระยะทาง (กม.)": f"{l_dist:.2f}" if i > 0 else "-", 
-                        "ความเร็ว (km/h)": f"{speed_kmh:.1f}" if i > 0 else "-",
-                        "น้ำมัน (ลิตร)": f"{f_used:.2f}" if i > 0 else "-", 
-                        "CO2 (kg)": f"{c_leg:.2f}" if i > 0 else "-"
+                        "เวลา (นาที)": t_min if i > 0 else "-", 
+                        "ลักษณะถนนหลัก": dominant_road, 
+                        "ความเร็วสูงสุด (km/h)": f"{max_speed:.0f}" if i > 0 else "-", 
+                        "น้ำมัน (ลิตร)": f"{f_used:.2f}" if i > 0 else "-"
                     })
                     curr_time += timedelta(seconds=SERVICE_TIME_SEC)
                 
