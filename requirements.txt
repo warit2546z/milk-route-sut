@@ -1,8 +1,8 @@
 streamlit
-pandas
-requests
 ortools
 folium
 streamlit-folium
-xlsxwriter
+pandas
+requests
 openpyxl
+xlsxwriter
