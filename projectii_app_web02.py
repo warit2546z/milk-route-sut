@@ -224,7 +224,7 @@ if st.button("🚀 ประมวลผลด้วย Google Maps API", type="
                         total_dist_meters += chunk_dist
                         total_time_seconds += chunk_time
                         
-                        # ✨ อัปเดต: ดึงเส้นทางแบบความละเอียดสูง (Step-by-step High Resolution)
+                        # ดึงเส้นทางแบบความละเอียดสูง (Step-by-step High Resolution)
                         for leg in route_data['legs']:
                             for step in leg['steps']:
                                 all_points.extend(decode_polyline(step['polyline']['points']))
@@ -267,7 +267,7 @@ if st.button("🚀 ประมวลผลด้วย Google Maps API", type="
                     attr='Google Maps', name='Google Maps Base', overlay=False, control=True
                 ).add_to(m)
 
-                # ✨ อัปเดต: เปลี่ยนสีเส้นเป็นสีน้ำเงิน (Google Blue #1A73E8) 
+                # เปลี่ยนสีเส้นเป็นสีน้ำเงิน (Google Blue #1A73E8) 
                 plugins.AntPath(
                     locations=all_points,
                     delay=800, dash_array=[15, 30], color="#1A73E8", pulse_color="#FFFFFF", weight=6,
@@ -297,23 +297,35 @@ if st.button("🚀 ประมวลผลด้วย Google Maps API", type="
                 schedule = []
                 curr_time = datetime.combine(datetime.today(), DEPART_TIME)
                 for i, n in enumerate(route_indices[:-1]):
-                    t_min, l_dist, f_used, c_leg = 0, 0.0, 0.0, 0.0
+                    t_min, l_dist, f_used, c_leg, speed_kmh = 0, 0.0, 0.0, 0.0, 0.0
                     loc_data = edited_df.iloc[n]
                     
                     if i > 0:
                         leg = all_legs[i-1] 
-                        t_min = math.ceil(leg['duration']['value'] / 60)
+                        duration_sec = leg['duration']['value']
+                        
+                        t_min = math.ceil(duration_sec / 60)
                         l_dist = leg['distance']['value'] / 1000
                         f_used = l_dist / KM_L
                         c_leg = f_used * EMISSION_FACTOR
+                        
+                        # สมการคำนวณความเร็ว (km/h) = ระยะทาง (กม.) / เวลา (ชั่วโมง)
+                        if duration_sec > 0:
+                            speed_kmh = l_dist / (duration_sec / 3600)
+                            
                         curr_time += timedelta(minutes=t_min)
                     
                     maps_url = f"https://www.google.com/maps/dir/?api=1&destination={loc_data['Lat']},{loc_data['Lon']}"
                     
                     schedule.append({
-                        "คิว": i, "สถานที่": loc_data["ชื่อสถานที่"], "เวลาที่ถึง": curr_time.strftime("%H:%M"),
-                        "นำทาง": maps_url if i > 0 else None, "เดินทาง (นาที)": t_min if i > 0 else "-", 
-                        "ระยะทาง (กม.)": f"{l_dist:.2f}" if i > 0 else "-", "น้ำมัน (ลิตร)": f"{f_used:.2f}" if i > 0 else "-", 
+                        "คิว": i, 
+                        "สถานที่": loc_data["ชื่อสถานที่"], 
+                        "เวลาที่ถึง": curr_time.strftime("%H:%M"),
+                        "นำทาง": maps_url if i > 0 else None, 
+                        "เดินทาง (นาที)": t_min if i > 0 else "-", 
+                        "ระยะทาง (กม.)": f"{l_dist:.2f}" if i > 0 else "-", 
+                        "ความเร็ว (km/h)": f"{speed_kmh:.1f}" if i > 0 else "-",
+                        "น้ำมัน (ลิตร)": f"{f_used:.2f}" if i > 0 else "-", 
                         "CO2 (kg)": f"{c_leg:.2f}" if i > 0 else "-"
                     })
                     curr_time += timedelta(seconds=SERVICE_TIME_SEC)
