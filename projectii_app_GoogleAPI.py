@@ -45,7 +45,7 @@ def decode_polyline(polyline_str):
 # 1. ตั้งค่าหน้าเพจ UI
 # ==========================================
 st.set_page_config(page_title="Milk Run (Google Engine)", page_icon="🗺️", layout="wide")
-st.title("🗺️ ระบบวางแผนเส้นทางขนส่งนม (Google Maps API)")
+st.title("SUT Milk Run (SUTMR)")
 st.markdown("วิเคราะห์เส้นทางด้วยสมองกล OR-Tools พร้อมระบบ **Route Chunking** และวิเคราะห์ประเภทถนนอัตโนมัติ")
 
 # ==========================================
