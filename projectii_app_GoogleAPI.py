@@ -75,7 +75,7 @@ def fetch_today_oil_price():
 # ==========================================
 st.set_page_config(page_title="SUTMR | ระบบจัดเส้นทาง", page_icon="🚚", layout="wide")
 st.title("SUT Milk Run (SUTMR)")
-st.markdown("วิเคราะห์เส้นทางด้วยสมองกล")
+st.markdown("วิเคราะห์เส้นทางด้วยสมองกล **พร้อมประเมินการจราจร Real-time**")
 
 # ==========================================
 # 2. แผงควบคุมด้านข้าง (Sidebar)
@@ -209,7 +209,7 @@ if st.button("🚀 ประมวลผลเส้นทาง", type="primary
             index = solution.Value(routing.NextVar(index))
         route_indices.append(0)
 
-        with st.spinner('กำลังดึงข้อมูลแผนที่ถนนจริง...'):
+        with st.spinner('กำลังดึงข้อมูลแผนที่ถนนจริงและสภาพการจราจร...'):
             all_legs = []
             all_points = []
             total_dist_meters = 0
@@ -227,7 +227,16 @@ if st.button("🚀 ประมวลผลเส้นทาง", type="primary
                 waypoints_str = "optimize:false|" + "|".join(waypoints_list) if waypoints_list else ""
                 
                 url = "https://maps.googleapis.com/maps/api/directions/json"
-                params = {"origin": origin, "destination": destination, "waypoints": waypoints_str, "mode": "driving", "key": API_KEY, "language": "th"}
+                # ✨ อัปเดต: เพิ่มคำสั่ง departure_time="now" สำหรับดึงข้อมูลจราจร Real-time
+                params = {
+                    "origin": origin, 
+                    "destination": destination, 
+                    "waypoints": waypoints_str, 
+                    "mode": "driving", 
+                    "key": API_KEY, 
+                    "language": "th",
+                    "departure_time": "now" 
+                }
                 res = requests.get(url, params=params)
                 
                 if res.status_code == 200:
@@ -235,9 +244,14 @@ if st.button("🚀 ประมวลผลเส้นทาง", type="primary
                     if data.get('status') == 'OK':
                         route_data = data['routes'][0]
                         all_legs.extend(route_data['legs']) 
+                        
                         total_dist_meters += sum([leg['distance']['value'] for leg in route_data['legs']])
-                        total_time_seconds += sum([leg['duration']['value'] for leg in route_data['legs']])
+                        
+                        # ✨ อัปเดต: ดึงเวลาที่รวมรถติด (duration_in_traffic) พร้อมระบบกันแครช
                         for leg in route_data['legs']:
+                            traffic_time = leg.get('duration_in_traffic', leg.get('duration'))['value']
+                            total_time_seconds += traffic_time
+                            
                             for step in leg['steps']:
                                 all_points.extend(decode_polyline(step['polyline']['points']))
                     else:
@@ -255,13 +269,13 @@ if st.button("🚀 ประมวลผลเส้นทาง", type="primary
             dist_delta = dist_km - baseline_km
             
             # --- Dashboard ---
-            st.subheader("📊 สรุปผลการดำเนินงาน")
+            st.subheader("📊 สรุปผลการดำเนินงาน (จราจร Real-time)")
             c1, c2, c3, c4 = st.columns(4)
             c1.metric("ระยะทางรวม", f"{dist_km:.2f} กม.", f"{dist_delta:.2f} กม.", delta_color="inverse")
             c2.metric("ต้นทุนน้ำมันรวม", f"฿{cost:.2f}", delta_color="off")
             c3.metric("ปริมาณ CO2", f"{(dist_km/KM_L)*EMISSION_FACTOR:.2f} kg", delta_color="inverse")
             hh, mm = divmod(total_time_seconds // 60, 60)
-            c4.metric("เวลาเดินทาง", f"{int(hh)}ชม. {int(mm)}นาที")
+            c4.metric("เวลาเดินทาง (รวมรถติด)", f"{int(hh)}ชม. {int(mm)}นาที")
 
             # --- แผนที่และตาราง ---
             col_map, col_table = st.columns([1.3, 1.7])
@@ -301,7 +315,10 @@ if st.button("🚀 ประมวลผลเส้นทาง", type="primary
                     
                     if i > 0:
                         leg = all_legs[i-1]
-                        t_min = math.ceil(leg['duration']['value'] / 60)
+                        
+                        # ✨ อัปเดต: ดึงเวลารถติดจริงมาแสดงรายจุด
+                        duration_sec = leg.get('duration_in_traffic', leg.get('duration'))['value']
+                        t_min = math.ceil(duration_sec / 60)
                         l_dist = leg['distance']['value'] / 1000
                         
                         # วิเคราะห์ถนน (Speed Heuristics)
@@ -333,9 +350,9 @@ if st.button("🚀 ประมวลผลเส้นทาง", type="primary
                         "เวลาถึง": curr_time.strftime("%H:%M"), 
                         "นำทาง": maps_url if i > 0 else None,
                         "ระยะทาง(กม.)": f"{l_dist:.2f}" if i > 0 else "-", 
-                        "เวลาเดินทาง(นาที)": f"{t_min}" if i > 0 else "-",
+                        "เวลา(รถติด)": f"{t_min} นาที" if i > 0 else "-",
                         "ประเภทถนน": dominant_road,
-                        "ความเร็วสูงสุด(km/h)": f"{max_speed:.0f}" if i > 0 else "-"
+                        "ความเร็วสูงสุด": f"{max_speed:.0f} km/h" if i > 0 else "-"
                     })
                     curr_time += timedelta(seconds=SERVICE_TIME_SEC)
                 
