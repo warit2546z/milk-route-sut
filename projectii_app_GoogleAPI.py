@@ -62,7 +62,7 @@ def fetch_today_oil_price():
                 name = val['name']
                 # ตรวจสอบว่าเป็นชนิดที่เราต้องการหรือไม่
                 if any(target in name for target in target_types):
-                    # กรองเอาเฉพาะตัวหลัก (ไม่เอาพรีเมียมถ้าเป็นไปได้ เพื่อความประหยัดของโครงการ)
+                    # กรองเอาเฉพาะตัวหลัก (ไม่เอาพรีเมียมถ้าเป็นไปได้)
                     if "พรีเมียม" not in name and val['price'] and val['price'] != "-":
                         oil_options[name] = float(val['price'])
             return oil_options, date_str
@@ -268,33 +268,86 @@ if st.button("🚀 ประมวลผลเส้นทาง", type="primary
             with col_map:
                 st.subheader("🗺️ เส้นทางการจัดส่ง")
                 m = folium.Map(location=coords[0], zoom_start=14)
-                folium.TileLayer('http://mt0.google.com/vt/lyrs=m&hl=th&x={x}&y={y}&z={z}', attr='Google', name='Google Maps').add_to(m)
+                folium.TileLayer('http://mt0.google.com/vt/lyrs=m&hl=th&x={x}&y={y}&z={z}', attr='Google', name='Google Maps Base').add_to(m)
+                
+                # เส้นนำทางสีน้ำเงิน
                 plugins.AntPath(locations=all_points, color="#1A73E8", weight=6).add_to(m)
+                
+                # หมุด (โชว์ตัวเลขลำดับคิว)
                 for i, n in enumerate(route_indices[:-1]):
                     loc = edited_df.iloc[n]
-                    icon = folium.Icon(color='green' if n==0 else 'red', icon='home' if n==0 else 'info-sign')
-                    folium.Marker([loc['Lat'], loc['Lon']], popup=f"คิว {i}: {loc['ชื่อสถานที่']}", icon=icon).add_to(m)
+                    if n == 0:
+                        folium.Marker([loc['Lat'], loc['Lon']], popup="ฟาร์ม", icon=folium.Icon(color='green', icon='home')).add_to(m)
+                    else:
+                        icon_html = f'''<div style="font-size: 11pt; font-weight: bold; color: white; background-color: #DF1B12; border: 2px solid white; border-radius: 50%; text-align: center; width: 28px; height: 28px; line-height: 24px; box-shadow: 2px 2px 4px rgba(0,0,0,0.3);">{i}</div>'''
+                        folium.Marker([loc['Lat'], loc['Lon']], popup=f"คิว {i}: {loc['ชื่อสถานที่']}", icon=folium.DivIcon(html=icon_html)).add_to(m)
+                
                 st_folium(m, width="100%", height=500, returned_objects=[])
+                
+                map_html = io.BytesIO()
+                m.save(map_html, close_file=False)
+                st.download_button(
+                    label="💾 ดาวน์โหลดแผนที่ (HTML)", data=map_html.getvalue(),
+                    file_name="Google_Optimized_Route.html", mime="text/html", use_container_width=True
+                )
 
             with col_table:
-                st.subheader("📋 ตารางลำดับงาน")
+                st.subheader("📋 ตารางลำดับงานและวิเคราะห์ถนน")
                 schedule = []
                 curr_time = datetime.combine(datetime.today(), DEPART_TIME)
                 for i, n in enumerate(route_indices[:-1]):
                     t_min, l_dist, max_speed = 0, 0.0, 0.0
                     dominant_road = "-"
+                    
                     if i > 0:
                         leg = all_legs[i-1]
                         t_min = math.ceil(leg['duration']['value'] / 60)
                         l_dist = leg['distance']['value'] / 1000
+                        
+                        # วิเคราะห์ถนน (Speed Heuristics)
+                        road_types = {"ถนนหลัก": 0, "ถนนรอง": 0, "ซอย/รถติด": 0}
+                        for step in leg['steps']:
+                            s_dist = step['distance']['value']
+                            s_dur = step['duration']['value']
+                            if s_dur > 0:
+                                s_speed = (s_dist / 1000) / (s_dur / 3600)
+                                if s_speed > max_speed: 
+                                    max_speed = s_speed
+                                if s_speed >= 50:
+                                    road_types["ถนนหลัก"] += s_dist
+                                elif s_speed >= 25:
+                                    road_types["ถนนรอง"] += s_dist
+                                else:
+                                    road_types["ซอย/รถติด"] += s_dist
+                        
+                        if sum(road_types.values()) > 0:
+                            dominant_road = max(road_types, key=road_types.get)
+                            
                         curr_time += timedelta(minutes=t_min)
-                    schedule.append({"คิว": i, "สถานที่": edited_df.iloc[n]["ชื่อสถานที่"], "เวลาถึง": curr_time.strftime("%H:%M"), "ระยะทาง(กม.)": f"{l_dist:.2f}", "เวลาเดินทาง": f"{t_min} นาที"})
+                        
+                    maps_url = f"https://www.google.com/maps/dir/?api=1&destination={edited_df.iloc[n]['Lat']},{edited_df.iloc[n]['Lon']}"
+                    
+                    schedule.append({
+                        "คิว": i, 
+                        "สถานที่": edited_df.iloc[n]["ชื่อสถานที่"], 
+                        "เวลาถึง": curr_time.strftime("%H:%M"), 
+                        "นำทาง": maps_url if i > 0 else None,
+                        "ระยะทาง(กม.)": f"{l_dist:.2f}" if i > 0 else "-", 
+                        "เวลาเดินทาง(นาที)": f"{t_min}" if i > 0 else "-",
+                        "ประเภทถนน": dominant_road,
+                        "ความเร็วสูงสุด(km/h)": f"{max_speed:.0f}" if i > 0 else "-"
+                    })
                     curr_time += timedelta(seconds=SERVICE_TIME_SEC)
-                st.dataframe(pd.DataFrame(schedule), use_container_width=True, hide_index=True)
+                
+                df_schedule = pd.DataFrame(schedule)
+                st.dataframe(
+                    df_schedule, use_container_width=True, hide_index=True,
+                    column_config={"นำทาง": st.column_config.LinkColumn("📍 นำทาง", display_text="เปิดแผนที่")}
+                )
                 
                 buf = io.BytesIO()
                 with pd.ExcelWriter(buf, engine='xlsxwriter') as writer:
-                    pd.DataFrame(schedule).to_excel(writer, index=False, sheet_name='Plan')
+                    df_schedule.to_excel(writer, index=False, sheet_name='Plan')
                 st.download_button("📥 ดาวน์โหลดไฟล์ Excel", buf.getvalue(), "SUTMR_Plan.xlsx", use_container_width=True)
         else:
             st.error(f"❌ เกิดข้อผิดพลาดจาก Google Maps API: {api_error_msg}")
