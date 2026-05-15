@@ -46,7 +46,7 @@ def decode_polyline(polyline_str):
 # ==========================================
 st.set_page_config(page_title="Milk Run (Google Engine)", page_icon="🗺️", layout="wide")
 st.title("SUT Milk Run (SUTMR)")
-st.markdown("วิเคราะห์เส้นทางด้วยสมองกล OR-Tools พร้อมระบบ **Route Chunking** และวิเคราะห์ประเภทถนนอัตโนมัติ")
+st.markdown("วิเคราะห์เส้นทางด้วยสมองกล")
 
 # ==========================================
 # 2. แผงควบคุมด้านข้าง (Sidebar)
