@@ -251,4 +251,127 @@ if st.button("🚀 ประมวลผลเส้นทาง (Multi-Vehicle)
                             v_legs.extend(route_data['legs']) 
                             fleet_total_dist_meters += sum([leg['distance']['value'] for leg in route_data['legs']])
                             
-                            for leg in route_
+                            for leg in route_data['legs']:
+                                traffic_time = leg.get('duration_in_traffic', leg.get('duration'))['value']
+                                fleet_total_time_seconds += traffic_time
+                                for step in leg['steps']:
+                                    v_points.extend(decode_polyline(step['polyline']['points']))
+                        else:
+                            api_success = False
+                            api_error_msg = data.get('status')
+                            break
+                    else:
+                        api_success = False
+                        break
+                    start_idx = end_idx 
+                
+                # เก็บข้อมูลของรถคันนี้ลง List
+                vehicle_map_data.append({
+                    "v_id": v_id + 1,
+                    "indices": route_indices,
+                    "points": v_points,
+                    "legs": v_legs
+                })
+
+        if api_success:
+            dist_km = fleet_total_dist_meters / 1000
+            cost = (dist_km / KM_L) * THB_L
+            dist_delta = dist_km - baseline_km
+            
+            st.subheader("📊 สรุปผลการดำเนินงานรวมทั้งฟลีท (Fleet Summary)")
+            c1, c2, c3, c4 = st.columns(4)
+            c1.metric("จำนวนรถที่ใช้วิ่งจริง", f"{len(all_routes)} คัน")
+            c2.metric("ระยะทางรวม", f"{dist_km:.2f} กม.", f"{dist_delta:.2f} กม.", delta_color="inverse")
+            c3.metric("ต้นทุนน้ำมันรวม", f"฿{cost:.2f}", delta_color="off")
+            c4.metric("ปริมาณ CO2", f"{(dist_km/KM_L)*EMISSION_FACTOR:.2f} kg", delta_color="inverse")
+
+            # ✨ สีสำหรับรถแต่ละคัน (น้ำเงิน, แดง, เขียว, ส้ม, ม่วง, เทาเข้ม)
+            color_palette = ['#1A73E8', '#E74C3C', '#2ECC71', '#F39C12', '#9B59B6', '#34495E']
+
+            col_map, col_table = st.columns([1.3, 1.7])
+            with col_map:
+                st.subheader("🗺️ แผนที่แยกโซนรถ (Zone Clustering)")
+                m = folium.Map(location=coords[0], zoom_start=13)
+                folium.TileLayer('http://mt0.google.com/vt/lyrs=m&hl=th&x={x}&y={y}&z={z}', attr='Google', name='Google Maps Base').add_to(m)
+                
+                # วาดฟาร์มก่อน
+                folium.Marker(coords[0], popup="ฟาร์ม", icon=folium.Icon(color='green', icon='home')).add_to(m)
+                
+                # วนลูปวาดเส้นทางให้รถแต่ละคัน
+                for v_data in vehicle_map_data:
+                    v_color = color_palette[(v_data["v_id"] - 1) % len(color_palette)]
+                    
+                    # เส้น AntPath แยกสี
+                    plugins.AntPath(locations=v_data["points"], color=v_color, weight=6, delay=1000).add_to(m)
+                    
+                    # หมุดของรถคันนั้นๆ (ใช้สีพื้นหลังเป็นสีเดียวกับเส้น)
+                    for idx_pos, n in enumerate(v_data["indices"][1:-1]): # ไม่เอาฟาร์ม (หัว/ท้าย)
+                        loc = edited_df.iloc[n]
+                        icon_html = f'''<div style="font-size: 11pt; font-weight: bold; color: white; background-color: {v_color}; border: 2px solid white; border-radius: 50%; text-align: center; width: 28px; height: 28px; line-height: 24px; box-shadow: 2px 2px 4px rgba(0,0,0,0.3);">{idx_pos + 1}</div>'''
+                        folium.Marker([loc['Lat'], loc['Lon']], popup=f"รถคันที่ {v_data['v_id']} | คิว {idx_pos + 1}: {loc['ชื่อสถานที่']}", icon=folium.DivIcon(html=icon_html)).add_to(m)
+                
+                st_folium(m, width="100%", height=500, returned_objects=[])
+
+            with col_table:
+                st.subheader("📋 ตารางลำดับงาน (แยกตามคันรถ)")
+                schedule = []
+                
+                for v_data in vehicle_map_data:
+                    curr_time = datetime.combine(datetime.today(), DEPART_TIME)
+                    for i, n in enumerate(v_data["indices"][:-1]):
+                        if n == 0 and i != 0: continue # ข้ามฟาร์มตอนท้าย
+                        
+                        t_min, l_dist, max_speed = 0, 0.0, 0.0
+                        dominant_road = "-"
+                        
+                        if i > 0:
+                            leg = v_data["legs"][i-1]
+                            duration_sec = leg.get('duration_in_traffic', leg.get('duration'))['value']
+                            t_min = math.ceil(duration_sec / 60)
+                            l_dist = leg['distance']['value'] / 1000
+                            
+                            road_types = {"ถนนหลัก": 0, "ถนนรอง": 0, "ซอย/รถติด": 0}
+                            for step in leg['steps']:
+                                s_dist = step['distance']['value']
+                                s_dur = step['duration']['value']
+                                if s_dur > 0:
+                                    s_speed = (s_dist / 1000) / (s_dur / 3600)
+                                    if s_speed > max_speed: max_speed = s_speed
+                                    if s_speed >= 50: road_types["ถนนหลัก"] += s_dist
+                                    elif s_speed >= 25: road_types["ถนนรอง"] += s_dist
+                                    else: road_types["ซอย/รถติด"] += s_dist
+                            
+                            if sum(road_types.values()) > 0:
+                                dominant_road = max(road_types, key=road_types.get)
+                            curr_time += timedelta(minutes=t_min)
+                            
+                        maps_url = f"https://www.google.com/maps/dir/?api=1&destination={edited_df.iloc[n]['Lat']},{edited_df.iloc[n]['Lon']}"
+                        
+                        schedule.append({
+                            "รถคันที่": f"🚚 {v_data['v_id']}",
+                            "คิว": "Start" if i == 0 else i, 
+                            "สถานที่": edited_df.iloc[n]["ชื่อสถานที่"], 
+                            "เวลาถึง": curr_time.strftime("%H:%M"), 
+                            "นำทาง": maps_url if i > 0 else None,
+                            "ระยะทาง(กม.)": f"{l_dist:.2f}" if i > 0 else "-", 
+                            "เวลา(รถติด)": f"{t_min} นาที" if i > 0 else "-",
+                            "ประเภทถนน": dominant_road,
+                            "ความเร็วสูงสุด": f"{max_speed:.0f} km/h" if i > 0 else "-"
+                        })
+                        
+                        if i > 0: curr_time += timedelta(seconds=SERVICE_TIME_SEC)
+                
+                df_schedule = pd.DataFrame(schedule)
+                st.dataframe(
+                    df_schedule, use_container_width=True, hide_index=True,
+                    column_config={"นำทาง": st.column_config.LinkColumn("📍 นำทาง", display_text="เปิดแผนที่")}
+                )
+                
+                buf = io.BytesIO()
+                with pd.ExcelWriter(buf, engine='xlsxwriter') as writer:
+                    df_schedule.to_excel(writer, index=False, sheet_name='Fleet_Plan')
+                st.download_button("📥 ดาวน์โหลดไฟล์ Excel (ทั้งฟลีท)", buf.getvalue(), "SUTMR_Fleet_Plan.xlsx", use_container_width=True)
+        else:
+            st.error(f"❌ เกิดข้อผิดพลาดจาก Google Maps API: {api_error_msg}")
+    else:
+        st.error("❌ ไม่สามารถจัดเส้นทางได้ โปรดตรวจสอบเงื่อนไขเวลา ความจุรถ หรือปริมาณงานที่มากเกินไป")
