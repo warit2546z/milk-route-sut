@@ -66,45 +66,66 @@ def fetch_today_oil_price():
 # ==========================================
 # 1. ตั้งค่าหน้าเพจ UI
 # ==========================================
-st.set_page_config(page_title="SUTMR | ระบบจัดเส้นทางหลายคัน", page_icon="🚚", layout="wide")
-st.title("SUT Milk Run (SUTMR) - Multi-Vehicle")
-st.markdown("วิเคราะห์เส้นทางด้วยสมองกล รองรับการจัดรถหลายคัน (CVRP) และประเมินจราจร Real-time")
+st.set_page_config(page_title="SUTMR | ระบบจัดเส้นทางแบบผสม (HFVRP)", page_icon="🚚", layout="wide")
+st.title("SUT Milk Run (SUTMR) - Heterogeneous Fleet")
+st.markdown("ระบบวิเคราะห์เส้นทางอัจฉริยะ รองรับรถขนส่งหลายประเภท (กระบะ, 4 ล้อ, 6 ล้อ) พร้อมประเมินจราจร Real-time")
 
 # ==========================================
-# 2. แผงควบคุมด้านข้าง (Sidebar)
+# 2. ข้อมูลจำเพาะของรถแต่ละประเภท (Profiles)
+# ==========================================
+# กำหนดค่ามาตรฐานของรถแต่ละประเภท (คุณวริทธิ์สามารถแก้ตัวเลขตรงนี้ได้เลยครับ)
+VEHICLE_PROFILES = {
+    "pickup": {"name": "รถกระบะ", "coolers": 2, "km_l": 12.0},
+    "box_pickup": {"name": "กระบะตู้ทึบ", "coolers": 3, "km_l": 10.0},
+    "truck_4w": {"name": "บรรทุก 4 ล้อ", "coolers": 5, "km_l": 8.0},
+    "truck_6w": {"name": "บรรทุก 6 ล้อ", "coolers": 10, "km_l": 6.0}
+}
+
+# ==========================================
+# 3. แผงควบคุมด้านข้าง (Sidebar)
 # ==========================================
 with st.sidebar:
     st.header("🔑 การเข้าถึงระบบ")
     API_KEY = st.text_input("Google Maps API Key", value="", type="password")
     
-    st.header("🚚 การจัดการรถขนส่ง (Fleet)")
-    # ✨ อัปเดต 1: เพิ่มเมนูเลือกจำนวนรถ
-    NUM_VEHICLES = st.number_input("จำนวนรถขนส่ง (คัน)", min_value=1, max_value=10, value=2, step=1)
+    st.header("🚚 การจัดทัพรถขนส่ง (Fleet Mix)")
+    st.caption("ระบุจำนวนรถแต่ละประเภทที่มีพร้อมใช้งาน")
+    c1, c2 = st.columns(2)
+    n_pickup = c1.number_input("รถกระบะ", 0, 5, 1)
+    n_box = c2.number_input("กระบะตู้ทึบ", 0, 5, 0)
+    n_4w = c1.number_input("บรรทุก 4 ล้อ", 0, 5, 0)
+    n_6w = c2.number_input("บรรทุก 6 ล้อ", 0, 5, 0)
+    
+    # สร้าง Fleet Array เพื่อส่งให้ AI
+    fleet_mix = []
+    for _ in range(n_pickup): fleet_mix.append(VEHICLE_PROFILES["pickup"])
+    for _ in range(n_box): fleet_mix.append(VEHICLE_PROFILES["box_pickup"])
+    for _ in range(n_4w): fleet_mix.append(VEHICLE_PROFILES["truck_4w"])
+    for _ in range(n_6w): fleet_mix.append(VEHICLE_PROFILES["truck_6w"])
+    NUM_VEHICLES = len(fleet_mix)
     
     st.header("⏱️ การปฏิบัติงาน")
-    DEPART_TIME = st.time_input("เวลาเริ่มออกรถจากฟาร์ม", datetime.strptime("11:20", "%H:%M").time())
+    DEPART_TIME = st.time_input("เวลาเริ่มออกรถจากฟาร์ม", datetime.strptime("11:00", "%H:%M").time())
     SERVICE_TIME_SEC = st.number_input("เวลาลงนมเฉลี่ยต่อจุด (วินาที)", min_value=0, value=45, step=5)
     
-    st.header("⛽ ต้นทุนและพื้นที่บรรทุก")
+    st.header("⛽ ราคาน้ำมันและพื้นที่บรรทุก")
     oil_data, update_date = fetch_today_oil_price()
     if oil_data:
         st.success(f"อัปเดตราคาล่าสุด: {update_date}")
-        selected_oil = st.selectbox("เลือกชนิดน้ำมัน", list(oil_data.keys()))
+        oil_names = list(oil_data.keys())
+        default_idx = next((i for i, name in enumerate(oil_names) if "ดีเซล" in name), 0)
+        selected_oil = st.selectbox("เลือกชนิดน้ำมัน", oil_names, index=default_idx)
         THB_L = st.number_input("ราคาน้ำมัน (THB/L)", value=float(oil_data[selected_oil]), step=0.5, format="%.2f")
     else:
         st.warning("⚠️ ไม่สามารถดึงข้อมูลราคา Real-time ได้")
-        THB_L = st.number_input("ราคาน้ำมัน (THB/L)", min_value=1.0, value=35.0, step=0.5, format="%.2f")
+        THB_L = st.number_input("ราคาน้ำมัน (THB/L)", min_value=1.0, value=32.0, step=0.5, format="%.2f")
     
-    KM_L = st.number_input("อัตราสิ้นเปลือง (km/L)", min_value=1.0, value=10.0, step=0.5, format="%.2f")
-    NUM_COOLERS = st.number_input("จำนวนถัง ต่อ 1 คัน (ใบ)", min_value=1, value=2, step=1)
     ICE_PER_COOLER = st.number_input("น้ำแข็ง/ถัง (L)", min_value=0.0, value=75.0, step=1.0)
     DEAD_SPACE_RATIO = 0.15 
-
-TOTAL_NET_CAPACITY = int((450 - ICE_PER_COOLER) * NUM_COOLERS)
-EMISSION_FACTOR = 2.70757206 
+    EMISSION_FACTOR = 2.70757206 
 
 # ==========================================
-# 3. จัดการข้อมูล
+# 4. จัดการข้อมูล
 # ==========================================
 st.subheader("📍 นำเข้าข้อมูลจุดจัดส่ง")
 uploaded_file = st.file_uploader("📂 อัปโหลดไฟล์รายการจัดส่ง (Excel หรือ CSV)", type=["csv", "xlsx"])
@@ -121,7 +142,7 @@ else:
     st.stop()
 
 # ==========================================
-# 4. ประมวลผล (Optimization Core - Multi-Vehicle)
+# 5. ประมวลผล (Heterogeneous Optimization)
 # ==========================================
 def time_to_min(t_str):
     try:
@@ -143,9 +164,13 @@ def safe_float(val):
     except: return 0.0
 
 st.markdown("---")
-if st.button("🚀 ประมวลผลเส้นทาง (Multi-Vehicle)", type="primary", use_container_width=True):
+if st.button("🚀 ประมวลผลเส้นทางแบบผสม (HFVRP)", type="primary", use_container_width=True):
     if not API_KEY:
         st.error("❌ กรุณาใส่ API Key ก่อนเริ่มทำงาน")
+        st.stop()
+        
+    if NUM_VEHICLES == 0:
+        st.error("❌ กรุณาระบุจำนวนรถขนส่งอย่างน้อย 1 คัน ในเมนูด้านซ้ายมือ")
         st.stop()
 
     demands = []
@@ -154,17 +179,18 @@ if st.button("🚀 ประมวลผลเส้นทาง (Multi-Vehicle)
         vol = (safe_float(row.get("200cc", 0)) * 0.2) + (safe_float(row.get("2L", 0)) * 2.0) + (safe_float(row.get("5L", 0)) * 5.0)
         demands.append(math.ceil(vol * (1.0 + DEAD_SPACE_RATIO)))
     
-    # เช็คว่ารถทั้งหมดที่เลือกไว้ บรรทุกพอหรือไม่
-    if sum(demands) > (TOTAL_NET_CAPACITY * NUM_VEHICLES):
-        st.error(f"❌ น้ำหนักรวมของนม เกินความจุรวมของรถ {NUM_VEHICLES} คัน (ความจุสูงสุด {TOTAL_NET_CAPACITY * NUM_VEHICLES} L)")
+    # ✨ อัปเดต: คำนวณความจุเฉพาะของรถแต่ละคัน (Dynamic Capacities)
+    vehicle_capacities = [int((450 - ICE_PER_COOLER) * v['coolers']) for v in fleet_mix]
+    total_fleet_capacity = sum(vehicle_capacities)
+    
+    if sum(demands) > total_fleet_capacity:
+        st.error(f"❌ น้ำหนักนมรวม เกินความจุของรถ {NUM_VEHICLES} คัน (ความจุฟลีทสูงสุด {total_fleet_capacity} L)")
         st.stop()
         
-    with st.spinner('กำลังให้สมองกล OR-Tools แบ่งโซนและจัดคิวรถแต่ละคัน...'):
+    with st.spinner('กำลังให้สมองกล OR-Tools จัดคิวรถตามขนาดความจุที่ต่างกัน...'):
         coords = edited_df[['Lat', 'Lon']].values.tolist()
         dist_matrix = [[haversine_distance(coords[i], coords[j]) for j in range(len(coords))] for i in range(len(coords))]
-        baseline_km = sum([dist_matrix[i][i+1] for i in range(len(coords)-1)] + [dist_matrix[len(coords)-1][0]]) / 1000
         
-        # ✨ อัปเดต 2: ตั้งค่า Manager ให้มีรถหลายคันตามตัวแปร NUM_VEHICLES
         manager = pywrapcp.RoutingIndexManager(len(coords), NUM_VEHICLES, 0)
         routing = pywrapcp.RoutingModel(manager)
         
@@ -178,7 +204,6 @@ if st.button("🚀 ประมวลผลเส้นทาง (Multi-Vehicle)
         routing.AddDimension(transit_idx, 2880, 2880, False, "Time")
         time_dim = routing.GetDimensionOrDie("Time")
         
-        # ตั้งเวลาเริ่มต้นให้รถ "ทุกคัน"
         for v in range(NUM_VEHICLES):
             time_dim.CumulVar(routing.Start(v)).SetValue(DEPART_TIME.hour * 60 + DEPART_TIME.minute)
         
@@ -193,8 +218,8 @@ if st.button("🚀 ประมวลผลเส้นทาง (Multi-Vehicle)
         def demand_callback(idx): return demands[manager.IndexToNode(idx)]
         demand_idx = routing.RegisterUnaryTransitCallback(demand_callback)
         
-        # ใส่ความจุให้รถทุกคันเท่าๆ กัน
-        routing.AddDimensionWithVehicleCapacity(demand_idx, 0, [TOTAL_NET_CAPACITY] * NUM_VEHICLES, True, "Capacity")
+        # ✨ อัปเดต: โยน Array ความจุของรถแต่ละคันไม่เท่ากันเข้าไปให้ AI คิด
+        routing.AddDimensionWithVehicleCapacity(demand_idx, 0, vehicle_capacities, True, "Capacity")
 
         search_params = pywrapcp.DefaultRoutingSearchParameters()
         search_params.first_solution_strategy = routing_enums_pb2.FirstSolutionStrategy.PATH_CHEAPEST_ARC
@@ -203,7 +228,6 @@ if st.button("🚀 ประมวลผลเส้นทาง (Multi-Vehicle)
         solution = routing.SolveWithParameters(search_params)
 
     if solution:
-        # ✨ อัปเดต 3: แยกเส้นทางออกมาทีละคัน
         all_routes = []
         for vehicle_id in range(NUM_VEHICLES):
             route_indices = []
@@ -211,26 +235,30 @@ if st.button("🚀 ประมวลผลเส้นทาง (Multi-Vehicle)
             while not routing.IsEnd(index):
                 route_indices.append(manager.IndexToNode(index))
                 index = solution.Value(routing.NextVar(index))
-            route_indices.append(manager.IndexToNode(index)) # เพิ่มจุดกลับฟาร์ม
+            route_indices.append(manager.IndexToNode(index)) 
             
-            # ถ้ารถคันนี้ได้วิ่งงาน (มีลูกค้ามากกว่า 0) ค่อยเอาไปดึง Google API
             if len(route_indices) > 2:
-                all_routes.append(route_indices)
+                all_routes.append({"v_id": vehicle_id, "indices": route_indices})
 
-        with st.spinner('กำลังดึงข้อมูลแผนที่และรถติด Real-time ของรถแต่ละคัน...'):
+        with st.spinner('กำลังดึงข้อมูลแผนที่ถนนจริงและสภาพจราจร (แยกตามประเภทรถ)...'):
             fleet_total_dist_meters = 0
             fleet_total_time_seconds = 0
+            fleet_total_cost = 0
+            fleet_total_co2 = 0
             api_success = True
             api_error_msg = ""
-            
-            # เก็บข้อมูลแยกคันเพื่อเอาไปวาดตารางและแผนที่
             vehicle_map_data = [] 
             
-            # วนลูปยิง API ทีละคัน
-            for v_id, route_indices in enumerate(all_routes):
+            for route_obj in all_routes:
+                v_id = route_obj["v_id"]
+                route_indices = route_obj["indices"]
+                v_profile = fleet_mix[v_id] # ดึงโปรไฟล์ (กินน้ำมัน/ความจุ) ของรถคันนี้
+                
                 v_points = []
                 v_legs = []
                 start_idx = 0
+                v_dist_meters = 0
+                v_time_seconds = 0
                 
                 while start_idx < len(route_indices) - 1:
                     end_idx = min(start_idx + 26, len(route_indices) - 1)
@@ -249,11 +277,13 @@ if st.button("🚀 ประมวลผลเส้นทาง (Multi-Vehicle)
                         if data.get('status') == 'OK':
                             route_data = data['routes'][0]
                             v_legs.extend(route_data['legs']) 
-                            fleet_total_dist_meters += sum([leg['distance']['value'] for leg in route_data['legs']])
+                            
+                            chunk_dist = sum([leg['distance']['value'] for leg in route_data['legs']])
+                            v_dist_meters += chunk_dist
                             
                             for leg in route_data['legs']:
                                 traffic_time = leg.get('duration_in_traffic', leg.get('duration'))['value']
-                                fleet_total_time_seconds += traffic_time
+                                v_time_seconds += traffic_time
                                 for step in leg['steps']:
                                     v_points.extend(decode_polyline(step['polyline']['points']))
                         else:
@@ -265,9 +295,19 @@ if st.button("🚀 ประมวลผลเส้นทาง (Multi-Vehicle)
                         break
                     start_idx = end_idx 
                 
-                # เก็บข้อมูลของรถคันนี้ลง List
+                # ✨ อัปเดต: คำนวณค่าน้ำมันและ CO2 ของรถคันนี้แยกต่างหาก (เพราะกินน้ำมันไม่เท่ากัน)
+                v_dist_km = v_dist_meters / 1000
+                v_cost = (v_dist_km / v_profile['km_l']) * THB_L
+                v_co2 = (v_dist_km / v_profile['km_l']) * EMISSION_FACTOR
+                
+                fleet_total_dist_meters += v_dist_meters
+                fleet_total_time_seconds += v_time_seconds
+                fleet_total_cost += v_cost
+                fleet_total_co2 += v_co2
+                
                 vehicle_map_data.append({
                     "v_id": v_id + 1,
+                    "profile": v_profile,
                     "indices": route_indices,
                     "points": v_points,
                     "legs": v_legs
@@ -275,51 +315,47 @@ if st.button("🚀 ประมวลผลเส้นทาง (Multi-Vehicle)
 
         if api_success:
             dist_km = fleet_total_dist_meters / 1000
-            cost = (dist_km / KM_L) * THB_L
-            dist_delta = dist_km - baseline_km
             
-            st.subheader("📊 สรุปผลการดำเนินงานรวมทั้งฟลีท (Fleet Summary)")
+            st.subheader("📊 สรุปผลการดำเนินงานรวมฟลีทแบบผสม (Mixed Fleet Summary)")
             c1, c2, c3, c4 = st.columns(4)
             c1.metric("จำนวนรถที่ใช้วิ่งจริง", f"{len(all_routes)} คัน")
-            c2.metric("ระยะทางรวม", f"{dist_km:.2f} กม.", f"{dist_delta:.2f} กม.", delta_color="inverse")
-            c3.metric("ต้นทุนน้ำมันรวม", f"฿{cost:.2f}", delta_color="off")
-            c4.metric("ปริมาณ CO2", f"{(dist_km/KM_L)*EMISSION_FACTOR:.2f} kg", delta_color="inverse")
+            c2.metric("ระยะทางรวม", f"{dist_km:.2f} กม.")
+            c3.metric("ต้นทุนน้ำมันรวม", f"฿{fleet_total_cost:.2f}")
+            c4.metric("ปริมาณ CO2 รวม", f"{fleet_total_co2:.2f} kg")
 
-            # ✨ สีสำหรับรถแต่ละคัน (น้ำเงิน, แดง, เขียว, ส้ม, ม่วง, เทาเข้ม)
-            color_palette = ['#1A73E8', '#E74C3C', '#2ECC71', '#F39C12', '#9B59B6', '#34495E']
+            color_palette = ['#1A73E8', '#E74C3C', '#2ECC71', '#F39C12', '#9B59B6', '#34495E', '#16A085', '#D35400']
 
             col_map, col_table = st.columns([1.3, 1.7])
             with col_map:
-                st.subheader("🗺️ แผนที่แยกโซนรถ (Zone Clustering)")
+                st.subheader("🗺️ แผนที่แยกโซนประเภทรถ")
                 m = folium.Map(location=coords[0], zoom_start=13)
                 folium.TileLayer('http://mt0.google.com/vt/lyrs=m&hl=th&x={x}&y={y}&z={z}', attr='Google', name='Google Maps Base').add_to(m)
                 
-                # วาดฟาร์มก่อน
                 folium.Marker(coords[0], popup="ฟาร์ม", icon=folium.Icon(color='green', icon='home')).add_to(m)
                 
-                # วนลูปวาดเส้นทางให้รถแต่ละคัน
                 for v_data in vehicle_map_data:
                     v_color = color_palette[(v_data["v_id"] - 1) % len(color_palette)]
-                    
-                    # เส้น AntPath แยกสี
                     plugins.AntPath(locations=v_data["points"], color=v_color, weight=6, delay=1000).add_to(m)
                     
-                    # หมุดของรถคันนั้นๆ (ใช้สีพื้นหลังเป็นสีเดียวกับเส้น)
-                    for idx_pos, n in enumerate(v_data["indices"][1:-1]): # ไม่เอาฟาร์ม (หัว/ท้าย)
+                    for idx_pos, n in enumerate(v_data["indices"][1:-1]): 
                         loc = edited_df.iloc[n]
                         icon_html = f'''<div style="font-size: 11pt; font-weight: bold; color: white; background-color: {v_color}; border: 2px solid white; border-radius: 50%; text-align: center; width: 28px; height: 28px; line-height: 24px; box-shadow: 2px 2px 4px rgba(0,0,0,0.3);">{idx_pos + 1}</div>'''
-                        folium.Marker([loc['Lat'], loc['Lon']], popup=f"รถคันที่ {v_data['v_id']} | คิว {idx_pos + 1}: {loc['ชื่อสถานที่']}", icon=folium.DivIcon(html=icon_html)).add_to(m)
+                        folium.Marker(
+                            [loc['Lat'], loc['Lon']], 
+                            popup=f"[{v_data['profile']['name']}] คันที่ {v_data['v_id']} | คิว {idx_pos + 1}: {loc['ชื่อสถานที่']}", 
+                            icon=folium.DivIcon(html=icon_html)
+                        ).add_to(m)
                 
                 st_folium(m, width="100%", height=500, returned_objects=[])
 
             with col_table:
-                st.subheader("📋 ตารางลำดับงาน (แยกตามคันรถ)")
+                st.subheader("📋 ตารางลำดับงาน (แยกตามคัน/ประเภทรถ)")
                 schedule = []
                 
                 for v_data in vehicle_map_data:
                     curr_time = datetime.combine(datetime.today(), DEPART_TIME)
                     for i, n in enumerate(v_data["indices"][:-1]):
-                        if n == 0 and i != 0: continue # ข้ามฟาร์มตอนท้าย
+                        if n == 0 and i != 0: continue 
                         
                         t_min, l_dist, max_speed = 0, 0.0, 0.0
                         dominant_road = "-"
@@ -348,15 +384,15 @@ if st.button("🚀 ประมวลผลเส้นทาง (Multi-Vehicle)
                         maps_url = f"https://www.google.com/maps/dir/?api=1&destination={edited_df.iloc[n]['Lat']},{edited_df.iloc[n]['Lon']}"
                         
                         schedule.append({
-                            "รถคันที่": f"🚚 {v_data['v_id']}",
+                            "ประเภทรถ": v_data['profile']['name'],
+                            "คันที่": v_data['v_id'],
                             "คิว": "Start" if i == 0 else i, 
                             "สถานที่": edited_df.iloc[n]["ชื่อสถานที่"], 
                             "เวลาถึง": curr_time.strftime("%H:%M"), 
                             "นำทาง": maps_url if i > 0 else None,
                             "ระยะทาง(กม.)": f"{l_dist:.2f}" if i > 0 else "-", 
                             "เวลา(รถติด)": f"{t_min} นาที" if i > 0 else "-",
-                            "ประเภทถนน": dominant_road,
-                            "ความเร็วสูงสุด": f"{max_speed:.0f} km/h" if i > 0 else "-"
+                            "ประเภทถนน": dominant_road
                         })
                         
                         if i > 0: curr_time += timedelta(seconds=SERVICE_TIME_SEC)
@@ -369,8 +405,8 @@ if st.button("🚀 ประมวลผลเส้นทาง (Multi-Vehicle)
                 
                 buf = io.BytesIO()
                 with pd.ExcelWriter(buf, engine='xlsxwriter') as writer:
-                    df_schedule.to_excel(writer, index=False, sheet_name='Fleet_Plan')
-                st.download_button("📥 ดาวน์โหลดไฟล์ Excel (ทั้งฟลีท)", buf.getvalue(), "SUTMR_Fleet_Plan.xlsx", use_container_width=True)
+                    df_schedule.to_excel(writer, index=False, sheet_name='HFVRP_Plan')
+                st.download_button("📥 ดาวน์โหลดไฟล์ Excel (แยกคัน)", buf.getvalue(), "SUTMR_HFVRP_Plan.xlsx", use_container_width=True)
         else:
             st.error(f"❌ เกิดข้อผิดพลาดจาก Google Maps API: {api_error_msg}")
     else:
