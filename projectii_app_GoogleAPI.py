@@ -16,14 +16,22 @@ import io
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 # ==========================================
-# ฟังก์ชันดึงราคาน้ำมัน Real-time (Bypass SSL + Dual-Plan)
+# ฟังก์ชันดึงราคาน้ำมัน Real-time (Bypass SSL + User-Agent Spoofing)
 # ==========================================
 @st.cache_data(ttl=21600) 
 def fetch_today_oil_price():
+    # 🎭 สร้างหน้ากากปลอมตัวเป็นเบราว์เซอร์ Google Chrome
+    fake_browser_headers = {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'Accept': 'application/json, text/plain, */*',
+        'Accept-Language': 'th-TH,th;q=0.9,en-US;q=0.8,en;q=0.7',
+    }
+
     # 🌟 แผน A: ดึงจาก API ตัวกลาง
     try:
         url = "https://api.chnwt.dev/thai-oil-api/latest"
-        res = requests.get(url, timeout=5, verify=False) 
+        # ✨ เพิ่ม verify=False เพื่อบังคับทะลุ SSL
+        res = requests.get(url, headers=fake_browser_headers, timeout=5, verify=False) 
         if res.status_code == 200:
             data = res.json()
             ptt_prices = data['response']['stations']['ptt']
@@ -41,12 +49,13 @@ def fetch_today_oil_price():
     except Exception:
         pass 
 
-    # 🚀 แผน B: ต่อท่อตรงดึงข้อมูลจาก ปตท. (SOAP Web Service + Bypass SSL)
+    # 🚀 แผน B: ต่อท่อตรงดึงข้อมูลจาก ปตท. (SOAP Web Service)
     try:
         url_ptt = "https://orapiweb.pttor.com/oilservice/OilPrice.asmx"
-        headers = {
+        headers_ptt = {
             'Content-Type': 'text/xml; charset=utf-8',
-            'SOAPAction': '"http://www.pttor.com/CurrentOilPrice"'
+            'SOAPAction': '"http://www.pttor.com/CurrentOilPrice"',
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
         }
         body = """<?xml version="1.0" encoding="utf-8"?>
         <soap:Envelope xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:xsd="http://www.w3.org/2001/XMLSchema" xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/">
@@ -57,7 +66,9 @@ def fetch_today_oil_price():
           </soap:Body>
         </soap:Envelope>"""
         
-        res_ptt = requests.post(url_ptt, data=body, headers=headers, timeout=10, verify=False)
+        # ✨ เพิ่ม verify=False และขยายเวลา Timeout เป็น 10 วินาที
+        res_ptt = requests.post(url_ptt, data=body, headers=headers_ptt, timeout=10, verify=False)
+        
         if res_ptt.status_code == 200:
             root = ET.fromstring(res_ptt.text)
             result_node = root.find('.//{http://www.pttor.com}CurrentOilPriceResult')
