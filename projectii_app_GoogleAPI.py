@@ -131,8 +131,8 @@ def generate_kml(route_results):
 # 1. ตั้งค่าหน้าเพจ UI
 # ==========================================
 st.set_page_config(page_title="Milk Run Optimization", page_icon="🚚", layout="wide")
-st.title("🚚 ระบบวางแผนเส้นทางขนส่งนม (VRP Payload Monitor)")
-st.markdown("ระบบวิเคราะห์เส้นทางอัจฉริยะ รองรับจุดแวะไม่จำกัดจำนวน (Auto-Chunking API)")
+st.title("🚚 SUT MILK DELIVERY")
+st.markdown("")
 
 # ==========================================
 # 2. แผงควบคุมด้านข้าง (Sidebar)
