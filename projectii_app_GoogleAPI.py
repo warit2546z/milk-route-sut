@@ -213,7 +213,7 @@ with st.sidebar:
     st.header("⚙️ ตั้งค่าสมองกลจัดเส้นทาง")
     
     first_sol_dict = {
-        "AUTOMATIC (ให้ระบบเลือกเอง)": routing_enums_pb2.FirstSolutionStrategy.AUTOMATIC,
+        "AUTOMATIC (ค่าเริ่มต้น: Cheapest Insertion)": routing_enums_pb2.FirstSolutionStrategy.AUTOMATIC,
         "SAVINGS (ประหยัดระยะทางทีละคัน)": routing_enums_pb2.FirstSolutionStrategy.SAVINGS,
         "PARALLEL_SAVINGS (ประหยัดแบบขนาน)": routing_enums_pb2.FirstSolutionStrategy.PARALLEL_SAVINGS,
         "PATH_CHEAPEST_ARC (เพื่อนบ้านที่ใกล้ที่สุด)": routing_enums_pb2.FirstSolutionStrategy.PATH_CHEAPEST_ARC,
@@ -228,7 +228,7 @@ with st.sidebar:
     )
 
     metaheuristic_dict = {
-        "AUTOMATIC (ให้ระบบเลือกเอง)": routing_enums_pb2.LocalSearchMetaheuristic.AUTOMATIC,
+        "AUTOMATIC (ค่าเริ่มต้น: Greedy Descent)": routing_enums_pb2.LocalSearchMetaheuristic.AUTOMATIC,
         "GUIDED_LOCAL_SEARCH (เน้นแก้จุดบอด)": routing_enums_pb2.LocalSearchMetaheuristic.GUIDED_LOCAL_SEARCH,
         "SIMULATED_ANNEALING (จำลองการหลอมโลหะ)": routing_enums_pb2.LocalSearchMetaheuristic.SIMULATED_ANNEALING,
         "TABU_SEARCH (ค้นหาแบบมีข้อห้าม)": routing_enums_pb2.LocalSearchMetaheuristic.TABU_SEARCH,
@@ -248,7 +248,7 @@ with st.sidebar:
     for _ in range(num_6w): active_vehicles.append({'type': 'บรรทุก 6 ล้อ', 'km_l': km_6w, 'idle': id_6w, 'max_weight': cap_6w})
 
     DEAD_SPACE_RATIO = 0.15 
-EMISSION_FACTOR = 2.70757206 
+    EMISSION_FACTOR = 2.70757206 
 
 # ==========================================
 # 3. จัดการข้อมูลนำเข้า
