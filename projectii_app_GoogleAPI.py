@@ -218,7 +218,7 @@ with st.sidebar:
         "PARALLEL_SAVINGS (ประหยัดแบบขนาน)": routing_enums_pb2.FirstSolutionStrategy.PARALLEL_SAVINGS,
         "PATH_CHEAPEST_ARC (เพื่อนบ้านที่ใกล้ที่สุด)": routing_enums_pb2.FirstSolutionStrategy.PATH_CHEAPEST_ARC,
         "LOCAL_CHEAPEST_INSERTION (แทรกจุดที่คุ้มที่สุด)": routing_enums_pb2.FirstSolutionStrategy.LOCAL_CHEAPEST_INSERTION,
-        "GLOBAL_CHEAPEST_ARC (จับคู่จุดใกล้สุดทั้งกระดาน)": routing_enums_pb2.FirstSolutionStrategy.GLOBAL_CHEAPEST_ARC
+        "SWEEP (กวาดเป็นวงกลมรอบฟาร์ม)": routing_enums_pb2.FirstSolutionStrategy.SWEEP
     }
     
     # 1. กล่องเลือกสำหรับ First Solution Strategy (ผู้ใช้ยังปรับเปลี่ยนได้)
