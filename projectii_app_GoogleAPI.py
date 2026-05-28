@@ -151,7 +151,7 @@ def time_to_min(t_str):
 # 1. ตั้งค่าหน้าเพจ UI
 # ==========================================
 st.set_page_config(page_title="Milk Run Optimization", page_icon="🚚", layout="wide")
-st.title("🚚 SUT Daily Route Plannimg")
+st.title("🚚 SUT Daily Route Planning")
 st.markdown("แอปพลิเคชันวางแผนเส้นทางการขนส่ง")
 
 # ==========================================
